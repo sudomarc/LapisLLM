@@ -23,5 +23,11 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Run tiny training smoke test
+        run: python scripts/train.py --config configs/tiny.yaml --epochs 1 --device cpu
+
+      - name: Run evaluation smoke test
+        run: python scripts/evaluate.py --checkpoint checkpoints/latest.pt --device cpu
+
       - name: Ruff check
         run: ruff check .
