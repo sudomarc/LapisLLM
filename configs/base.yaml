@@ -1,5 +1,4 @@
 # Lapis base configuration
-
 model:
   vocab_size: 50304
   hidden_size: 768
@@ -25,4 +24,3 @@ training:
 runtime:
   dtype: "bfloat16"
   device: "auto"
-  compile: true
