@@ -8,12 +8,11 @@ import math
 from pathlib import Path
 
 import torch
-import yaml
 from torch.utils.data import DataLoader
 
-from scripts.train import DEFAULT_CORPUS, TextDataset
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
+from scripts.train import DEFAULT_CORPUS, TextDataset
 
 
 def main() -> None:
@@ -23,7 +22,13 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else "cpu" if args.device == "auto" else args.device)
+    device = torch.device(
+        "cuda"
+        if args.device == "auto" and torch.cuda.is_available()
+        else "cpu"
+        if args.device == "auto"
+        else args.device
+    )
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     config = checkpoint["config"]
     model = LapisModel(**config["model"]).to(device)
@@ -31,8 +36,19 @@ def main() -> None:
     model.eval()
 
     tokenizer = Tokenizer.load(str(Path(args.checkpoint).parent / "tokenizer"))
-    corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
-    seq_len = min(model.max_position_embeddings, int(config.get("data", {}).get("max_seq_length", model.max_position_embeddings)))
+    corpus = (
+        Path(args.data).read_text(encoding="utf-8")
+        if args.data
+        else DEFAULT_CORPUS
+    )
+    seq_len = min(
+        model.max_position_embeddings,
+        int(
+            config.get("data", {}).get(
+                "max_seq_length", model.max_position_embeddings
+            )
+        ),
+    )
     dataset = TextDataset(tokenizer.encode(corpus), seq_len, tokenizer.pad_id)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
