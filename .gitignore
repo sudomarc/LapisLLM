@@ -1,0 +1,39 @@
+# Lapis LLM Project - Git Ignore
+# Generated for LAPIS project
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.env
+.env.*
+!.env.example
+
+# Data
+data/raw/
+data/cleaned/
+data/deduplicated/
+data/tokenized/
+data/manifests/
+
+# Checkpoints and outputs
+checkpoints/
+artifacts/
+outputs/
+logs/
+runs/
+
+# IDE
+.vscode/
+.idea/
+
+# Model checkpoints (large files)
+*.safetensors
+*.gguf
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store

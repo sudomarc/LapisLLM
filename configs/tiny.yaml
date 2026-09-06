@@ -1,0 +1,29 @@
+# Lapis Tiny model configuration
+# A small model for quick experiments
+
+model:
+  vocab_size: 50304
+  hidden_size: 384
+  intermediate_size: 768
+  num_layers: 2
+  num_attention_heads: 6
+  num_key_value_heads: 2
+  max_position_embeddings: 512
+  rope_theta: 10000.0
+  dropout: 0.1
+  bias: true
+
+training:
+  learning_rate: 3e-4
+  weight_decay: 0.1
+  warmup_steps: 10
+  max_steps: 200
+  batch_size: 8
+  micro_batch_size: 2
+  gradient_accumulation_steps: 4
+  gradient_clip: 1.0
+
+runtime:
+  dtype: "bfloat16"
+  device: "cpu"
+  compile: false
