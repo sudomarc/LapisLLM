@@ -16,9 +16,12 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import logging
+import os
 import re
+import sys
 import time
 import unicodedata
 from pathlib import Path
@@ -67,7 +70,7 @@ def load_streaming(spec: dict[str, Any]):
     try:
         from datasets import load_dataset
     except ImportError as exc:
-        raise SystemExit("Missing dependency: install it with `pip install datasets`." ) from exc
+        raise SystemExit("Missing dependency: install it with `pip install datasets`.") from exc
 
     kwargs: dict[str, Any] = {
         "path": spec["dataset"],
@@ -125,6 +128,7 @@ def main() -> int:
             break
         spec = SOURCES[name]
         LOGGER.info("Loading %s (%s)", name, spec["dataset"])
+        stream = None
         try:
             stream = load_streaming(spec)
         except Exception as exc:
@@ -162,6 +166,13 @@ def main() -> int:
                 total_examples += 1
         except Exception as exc:
             LOGGER.warning("Stream interrupted for %s after %d examples: %s", name, examples, exc)
+        finally:
+            # Hugging Face's streaming parquet backend has had versions where
+            # background HTTP workers keep the interpreter alive after the
+            # IterableDataset is no longer used. Drop references promptly so
+            # normal garbage collection can close those resources.
+            del stream
+            gc.collect()
 
         source_path = output / f"{name}.txt"
         size = write_source(source_path, name, records)
@@ -188,4 +199,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    exit_code = main()
+    if exit_code == 0:
+        # Some Hugging Face streaming/parquet releases leave a background HTTP
+        # worker alive after iteration. All corpus files are closed above, so
+        # once collection is complete it is safe to terminate this short-lived
+        # collector process explicitly instead of hanging a Colab cell.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+    raise SystemExit(exit_code)
