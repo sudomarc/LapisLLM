@@ -32,5 +32,6 @@ runtime:
   compile: false
 
 data:
+  dataset_name: "lapis-open-mixture"
   validation_split: 0.1
   max_seq_length: 63
