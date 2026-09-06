@@ -2,8 +2,13 @@ import torch
 
 from lapis.config.model_config import ModelConfig
 from lapis.model.lapis_model import LapisModel
-from scripts.train import DEFAULT_CORPUS, TextDataset, load_yaml, resolve_training_seq_len
 from lapis.tokenizer.tokenizer import Tokenizer
+from scripts.train import (
+    DEFAULT_CORPUS,
+    TextDataset,
+    load_yaml,
+    resolve_training_seq_len,
+)
 
 
 def test_resolved_training_sequence_fits_model_context():
@@ -20,9 +25,12 @@ def test_resolved_training_sequence_fits_model_context():
 
 def test_tiny_model_accepts_dataset_batch_and_backpropagates():
     config = load_yaml("configs/tiny.yaml")
+    tokenizer_cfg = config.get("tokenizer", {})
     tokenizer = Tokenizer.train_from_iterator(
         [DEFAULT_CORPUS],
-        vocab_size=config["tokenizer"].get("vocab_size", config["model"]["vocab_size"]),
+        vocab_size=tokenizer_cfg.get(
+            "vocab_size", config["model"]["vocab_size"]
+        ),
         min_frequency=1,
     )
     config["model"]["vocab_size"] = tokenizer.vocab_size
