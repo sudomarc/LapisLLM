@@ -4,36 +4,34 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+from lapis.checkpoint import CheckpointError, load_checkpoint
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-from scripts.generate import sample_next_token
-
-
-def resolve_device(requested: str) -> torch.device:
-    if requested == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if requested.startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA was requested, but no CUDA device is available. "
-            "In Colab, enable Runtime > Change runtime type > T4 GPU, "
-            "or run with --device cpu."
-        )
-    return torch.device(requested)
+from scripts.generate import resolve_device, sample_next_token
 
 
 def load_chat_model(checkpoint_path: Path, device: torch.device) -> tuple[LapisModel, Tokenizer]:
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model = LapisModel(**checkpoint["config"]["model"]).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    checkpoint = load_checkpoint(checkpoint_path, map_location=device)
+    try:
+        model = LapisModel(**checkpoint["config"]["model"]).to(device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+    except (RuntimeError, TypeError, ValueError, KeyError) as exc:
+        raise CheckpointError("Checkpoint model state is incompatible with its configuration") from exc
+
+    embedded = checkpoint.get("tokenizer_json")
+    tokenizer = (
+        Tokenizer.from_json(embedded)
+        if embedded
+        else Tokenizer.load(str(checkpoint_path.parent / "tokenizer"))
+    )
+    expected = checkpoint.get("tokenizer_vocab_size")
+    if expected is not None and int(expected) != tokenizer.vocab_size:
+        raise CheckpointError("Checkpoint tokenizer metadata does not match tokenizer")
     model.eval()
-    tokenizer = Tokenizer.load(str(checkpoint_path.parent / "tokenizer"))
     return model, tokenizer
 
 
@@ -46,6 +44,15 @@ def stream_response(
     top_k: int,
     top_p: float,
 ) -> None:
+    if max_new_tokens < 1:
+        raise ValueError("max_new_tokens must be at least 1")
+    if temperature < 0:
+        raise ValueError("temperature must be non-negative")
+    if top_k < 0:
+        raise ValueError("top_k must be non-negative")
+    if not 0.0 < top_p <= 1.0:
+        raise ValueError("top_p must be greater than 0 and at most 1")
+
     token_ids = tokenizer.encode(prompt, add_special_tokens=False)
     if not token_ids:
         token_ids = [tokenizer.bos_id]
@@ -91,8 +98,7 @@ def main() -> None:
         parser.error("--max-new-tokens must be at least 1")
 
     device = resolve_device(args.device)
-    checkpoint_path = Path(args.checkpoint)
-    model, tokenizer = load_chat_model(checkpoint_path, device)
+    model, tokenizer = load_chat_model(Path(args.checkpoint), device)
 
     print(f"LAPIS Chat — device: {device} — type 'quit' to exit", flush=True)
     while True:
@@ -101,12 +107,10 @@ def main() -> None:
         except (EOFError, KeyboardInterrupt):
             print()
             break
-
         if prompt.lower() in {"quit", "exit"}:
             break
         if not prompt:
             continue
-
         stream_response(
             model,
             tokenizer,
