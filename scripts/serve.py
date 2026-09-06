@@ -8,9 +8,11 @@ from pathlib import Path
 
 import torch
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from lapis.config.base import resolve_device
+from lapis.config.model_config import model_config_kwargs
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
 
@@ -29,7 +31,7 @@ class ChatRequest(BaseModel):
 
 def load_runtime(checkpoint_path: str, device: torch.device):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model = LapisModel(**checkpoint["config"]["model"]).to(device)
+    model = LapisModel(**model_config_kwargs(checkpoint["config"])).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     tokenizer = Tokenizer.load(str(Path(checkpoint_path).parent / "tokenizer"))
@@ -48,9 +50,12 @@ def create_app(checkpoint_path: str, device: torch.device) -> FastAPI:
     def chat(request: ChatRequest):
         prompt = "\n".join(f"{m.role}: {m.content}" for m in request.messages)
         from scripts.generate import generate
-        text = generate(
-            model, tokenizer, prompt, request.max_tokens, request.temperature, 40, 0.95
-        )
+        try:
+            text = generate(
+                model, tokenizer, prompt, request.max_tokens, request.temperature, 40, 0.95
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "id": "lapis-completion",
             "object": "chat.completion",
@@ -68,7 +73,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
-    device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else "cpu" if args.device == "auto" else args.device)
+    device = resolve_device(args.device)
     uvicorn.run(create_app(args.checkpoint, device), host=args.host, port=args.port)
 
 
