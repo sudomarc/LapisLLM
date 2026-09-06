@@ -32,8 +32,9 @@ training:
 runtime:
   dtype: float32
   device: cpu
-  compile: false
 
 data:
+  dataset_name: "lapis-open-mixture"
+  validation_split: 0.1
   # One extra token is retained by TextDataset for the causal target shift.
   max_seq_length: 63
