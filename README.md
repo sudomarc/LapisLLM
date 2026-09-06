@@ -54,9 +54,9 @@ The tiny profile is designed for local development and CI. GPU profiles are avai
 
 Training uses a deterministic validation split of the supplied raw text. The tokenizer is trained from the training partition only, so the held-out partition is not used to construct the tokenizer vocabulary.
 
-Checkpoints are versioned and self-contained. They include model, optimizer, scheduler, training state, tokenizer serialization, data fingerprint, and RNG state. Checkpoints are written atomically to avoid replacing a good artifact with a partial file.
+Checkpoints are versioned and self-contained. They include model, optimizer, scheduler, training state, tokenizer serialization, data fingerprint, RNG state, the training seed, and the DataLoader cursor. Checkpoints are written atomically to avoid replacing a good artifact with a partial file.
 
-Resume is strict: model architecture, training hyperparameters that affect continuation, tokenizer metadata, and the dataset fingerprint must match the checkpoint. Incompatible state fails early instead of silently restarting or mixing incompatible artifacts.
+Resume is strict: model architecture, training hyperparameters that affect continuation, tokenizer metadata, seed, and dataset fingerprint must match the checkpoint. Incompatible state fails early instead of silently restarting or mixing incompatible artifacts.
 
 ```bash
 python scripts/train.py \
@@ -66,7 +66,7 @@ python scripts/train.py \
   --resume outputs/tiny.pt
 ```
 
-The current release does not promise exact mid-epoch replay because DataLoader position is not serialized. Resume is therefore validated only at checkpoint boundaries.
+Resume reconstructs each epoch's sampling order from the recorded seed and skips the recorded batch cursor, so interruptions in the middle of an epoch do not silently restart the data stream. Older checkpoints without the cursor are rejected for resume rather than risking data replay.
 
 ## Evaluation
 
@@ -78,7 +78,7 @@ python scripts/evaluate.py --checkpoint outputs/tiny.pt --data path/to/corpus.tx
 
 ## Generation
 
-`temperature=0` is explicit greedy decoding. Positive temperatures enable sampling. `top-k` may be `0` to disable filtering; `top-p` must be in `(0, 1]`. Prompts longer than the model context are intentionally left-truncated during generation.
+`temperature=0` is explicit greedy decoding. Positive temperatures enable sampling. `top-k` may be `0` to disable filtering; `top-p` must be in `(0, 1]`. Prompts longer than the model context are intentionally left-truncated during generation. An empty prompt starts generation from the tokenizer BOS token.
 
 ```bash
 python scripts/generate.py \
@@ -122,7 +122,7 @@ The repository does not require a committed model checkpoint for installation or
 
 ## Reproducibility and limitations
 
-Training accepts an explicit seed and records RNG state in checkpoints. Exact mid-epoch DataLoader replay is not yet implemented. Distributed training, efficient KV-cache generation, production-scale data processing, broad benchmark evaluation, and large-model scaling remain future work.
+Training accepts an explicit seed and records RNG state, seed, epoch, and DataLoader cursor in checkpoints. Exact mid-epoch replay is supported by reconstructing a deterministic per-epoch sampler. Distributed training, efficient KV-cache generation, production-scale data processing, broad benchmark evaluation, and large-model scaling remain future work.
 
 ## Development
 
