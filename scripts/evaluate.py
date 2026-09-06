@@ -18,7 +18,6 @@ from lapis.tokenizer.tokenizer import Tokenizer
 from scripts.train import (
     DEFAULT_CORPUS,
     TextDataset,
-    load_yaml,
     resolve_device,
     resolve_training_seq_len,
     split_corpus,
@@ -57,13 +56,20 @@ def main() -> None:
     expected_vocab = checkpoint.get("tokenizer_vocab_size")
     if expected_vocab is not None and int(expected_vocab) != tokenizer.vocab_size:
         raise CheckpointError("Checkpoint tokenizer metadata does not match tokenizer")
+    if tokenizer.vocab_size != model.vocab_size:
+        raise CheckpointError(
+            "Tokenizer vocabulary size does not match model vocabulary size"
+        )
 
     corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
     validation_fraction = float(config.get("data", {}).get("validation_split", 0.1))
     _, validation_text = split_corpus(corpus, validation_fraction)
     model_config = ModelConfig(config)
     seq_len = resolve_training_seq_len(model_config, config)
-    dataset = TextDataset(tokenizer.encode(validation_text), seq_len, tokenizer.pad_id)
+    tokens = tokenizer.encode(validation_text)
+    if max(tokens, default=-1) >= model.vocab_size:
+        raise CheckpointError("Validation data produced a token ID outside model vocabulary")
+    dataset = TextDataset(tokens, seq_len, tokenizer.pad_id)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
     total_nll = 0.0
