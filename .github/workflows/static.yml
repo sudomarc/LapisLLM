@@ -1,4 +1,4 @@
-name: Deploy LAPIS website to Pages
+name: Lapis website
 
 on:
   push:
@@ -17,7 +17,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package.json
+      - name: Install website tooling
+        working-directory: website
+        run: npm install
+      - name: Lint website
+        working-directory: website
+        run: npm run lint
+      - name: Build website
+        working-directory: website
+        run: npm run build
+
   deploy:
+    name: Deploy LAPIS website to Pages
+    if: github.event_name != 'pull_request'
+    needs: validate
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -25,32 +50,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: website/package.json
-
       - name: Install website tooling
         working-directory: website
         run: npm install
-
-      - name: Validate website
+      - name: Build website artifact
         working-directory: website
-        run: npm run lint && npm run build
-
+        run: npm run build
       - name: Upload website artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: './website'
-
       - name: Deploy to GitHub Pages
-        if: github.event_name != 'pull_request'
         id: deployment
         uses: actions/deploy-pages@v5
