@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "lapis"
-version = "0.1.1"
+version = "0.1.2"
 description = "LAPIS language model and training stack from scratch"
 requires-python = ">=3.11"
 dependencies = [
@@ -40,4 +40,4 @@ addopts = []
 
 [tool.ruff]
 line-length = 88
-select = ["F"]
+select = ["E4", "E7", "E9", "F"]
