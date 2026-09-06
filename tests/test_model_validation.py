@@ -38,9 +38,14 @@ def test_model_rejects_invalid_label_ids():
         model(inputs, labels=labels)
 
 
-def test_model_rejects_single_token_sequences():
-    with pytest.raises(ValueError, match="two tokens"):
-        make_model()(torch.tensor([[1]], dtype=torch.long))
+def test_single_token_inference_is_allowed_but_loss_is_not():
+    model = make_model()
+    inputs = torch.tensor([[1]], dtype=torch.long)
+    logits, loss = model(inputs)
+    assert logits.shape == (1, 1, model.vocab_size)
+    assert loss is None
+    with pytest.raises(ValueError, match="at least two tokens"):
+        model(inputs, labels=inputs)
 
 
 def test_model_rejects_odd_rope_head_dimension():
