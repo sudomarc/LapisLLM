@@ -14,6 +14,10 @@ Usage from the repository root:
 A checkpoint already present after cloning is automatically resumed. Use
 --fresh to deliberately ignore it and start a new training run.
 
+The training device defaults to ``auto``: CUDA is used when a GPU is available,
+and CPU is used otherwise. This prevents a Colab CPU runtime from failing merely
+because the default was hard-coded to CUDA.
+
 GitHub authentication is requested interactively at push time and is never
 written into the repository URL or notebook source.
 """
@@ -73,10 +77,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-chars", type=int, default=50_000_000)
     parser.add_argument("--max-examples", type=int, default=100_000)
     parser.add_argument("--config", default="configs/tiny.yaml")
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="Training device; auto uses CUDA when available and CPU otherwise.",
+    )
     parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
     parser.add_argument("--resume", action="store_true", help="Require and resume from the existing checkpoint")
-    parser.add_argument("--fresh", action="store_true", help="Ignore an existing checkpoint and train from scratch")
+    parser.add_argument("--fresh", action="store_true", help="Ignore an existing checkpoint and start from scratch")
     parser.add_argument("--skip-data", action="store_true", help="Reuse the existing corpus")
     parser.add_argument("--skip-tests", action="store_true", help="Skip pytest verification")
     parser.add_argument("--skip-chat", action="store_true", help="Skip the real chat CLI verification")
@@ -102,6 +111,8 @@ def print_system_info() -> None:
         if torch.cuda.is_available():
             print(f"GPU        : {torch.cuda.get_device_name(0)}")
             print(f"VRAM       : {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        else:
+            print("GPU        : none — auto mode will use CPU")
     except Exception as exc:
         print(f"Torch info unavailable: {exc}")
     print("=" * 72, flush=True)
