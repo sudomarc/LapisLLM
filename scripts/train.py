@@ -128,12 +128,48 @@ def save_checkpoint(path: Path, model, optimizer, scheduler, step, epoch, config
             "config": config,
             "tokenizer_version": tokenizer.VERSION,
             "python_rng_state": random.getstate(),
-            "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            "torch_rng_state": torch.get_rng_state().clone().cpu(),
+            "cuda_rng_state": [state.clone().cpu() for state in torch.cuda.get_rng_state_all()]
+            if torch.cuda.is_available()
+            else None,
         },
         path,
     )
     tokenizer.save(str(path.parent / "tokenizer"))
+
+
+def restore_torch_rng_state(state) -> None:
+    """Restore RNG state with compatibility for older/corrupted checkpoints."""
+    if state is None:
+        return
+    if not isinstance(state, torch.Tensor):
+        state = torch.as_tensor(state, dtype=torch.uint8)
+    else:
+        state = state.detach().to(device="cpu", dtype=torch.uint8)
+    if state.numel() == 0:
+        raise ValueError("Checkpoint contains an empty torch RNG state.")
+    torch.set_rng_state(state.contiguous())
+
+
+def restore_cuda_rng_state(state) -> None:
+    """Restore CUDA RNG state while accepting tensor/list checkpoint formats."""
+    if state is None or not torch.cuda.is_available():
+        return
+    if isinstance(state, torch.Tensor):
+        states = [state]
+    elif isinstance(state, (list, tuple)):
+        states = list(state)
+    else:
+        raise TypeError("Checkpoint contains an invalid CUDA RNG state.")
+
+    normalized = []
+    for item in states:
+        if not isinstance(item, torch.Tensor):
+            item = torch.as_tensor(item, dtype=torch.uint8)
+        else:
+            item = item.detach().to(device="cpu", dtype=torch.uint8)
+        normalized.append(item.contiguous())
+    torch.cuda.set_rng_state_all(normalized)
 
 
 def build_scheduler(optimizer, training_config):
@@ -259,10 +295,8 @@ def main() -> None:
         epoch = int(checkpoint.get("epoch", 0))
         if checkpoint.get("python_rng_state") is not None:
             random.setstate(checkpoint["python_rng_state"])
-        if checkpoint.get("torch_rng_state") is not None:
-            torch.set_rng_state(checkpoint["torch_rng_state"])
-        if checkpoint.get("cuda_rng_state") is not None and torch.cuda.is_available():
-            torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
+        restore_torch_rng_state(checkpoint.get("torch_rng_state"))
+        restore_cuda_rng_state(checkpoint.get("cuda_rng_state"))
         print(f"Resumed from optimizer step {optimizer_step}")
 
     model.train()
