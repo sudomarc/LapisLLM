@@ -6,6 +6,7 @@ import torch
 from lapis.config.base import load_config
 from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
+from lapis.tokenizer.tokenizer import Tokenizer
 from scripts.generate import sample_next_token, validate_generation_parameters
 from scripts.prepare_data import prepare_data
 from scripts.train import (
@@ -14,9 +15,9 @@ from scripts.train import (
     _checkpoint_payload,
     build_scheduler,
     load_checkpoint,
+    resolve_device,
     save_checkpoint,
 )
-from lapis.tokenizer.tokenizer import Tokenizer
 
 
 def make_model(**overrides):
@@ -62,7 +63,7 @@ def test_model_rejects_all_ignored_targets():
         model(input_ids, labels=labels)
 
 
-def test_training_config_rejects_unused_batch_size_mismatch():
+def test_training_config_rejects_batch_size_mismatch():
     config = load_config("configs/tiny.yaml")
     config["training"]["batch_size"] = 7
     with pytest.raises(ValueError, match="batch_size"):
@@ -81,6 +82,13 @@ def test_generation_parameter_validation_and_greedy_zero_temperature():
     assert token.item() == 1
 
 
+def test_explicit_cuda_request_fails_cleanly_when_unavailable():
+    if torch.cuda.is_available():
+        pytest.skip("CUDA is available on this runner")
+    with pytest.raises(RuntimeError, match="CUDA was explicitly requested"):
+        resolve_device({"runtime": {"device": "cuda"}}, None)
+
+
 def test_epoch_dataloader_order_is_reproducible():
     dataset = TextDataset(list(range(30)), seq_len=4, pad_id=0)
     first = list(_build_dataloader(dataset, batch_size=3, seed=123, epoch=4))
@@ -89,24 +97,23 @@ def test_epoch_dataloader_order_is_reproducible():
     assert torch.equal(first[-1][0], second[-1][0])
 
 
+def test_targetless_trailing_fragment_is_not_emitted():
+    dataset = TextDataset(list(range(5)), seq_len=4, pad_id=0)
+    assert len(dataset) == 1
+    inputs, labels = dataset[0]
+    assert inputs.tolist() == [0, 1, 2, 3, 4]
+    assert torch.equal(labels, inputs)
+
+
 def test_checkpoint_contains_progress_and_scheduler_state(tmp_path: Path):
-    model = make_model()
+    tokenizer = Tokenizer.train_from_iterator(["hello world"], vocab_size=32, min_frequency=1)
+    model = make_model(vocab_size=tokenizer.vocab_size)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     training = TrainingConfig(load_config("configs/local-dev.yaml"))
     scheduler = build_scheduler(optimizer, training)
-    tokenizer = Tokenizer.train_from_iterator(["hello world"], vocab_size=32, min_frequency=1)
     config = load_config("configs/local-dev.yaml")
     config["model"]["vocab_size"] = tokenizer.vocab_size
-    payload = _checkpoint_payload(
-        model,
-        optimizer,
-        scheduler,
-        3,
-        2,
-        5,
-        config,
-        tokenizer,
-    )
+    payload = _checkpoint_payload(model, optimizer, scheduler, 3, 2, 5, config, tokenizer)
     assert payload["checkpoint_version"] == 2
     assert payload["step"] == 3
     assert payload["epoch"] == 2
