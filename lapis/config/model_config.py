@@ -16,7 +16,24 @@ def get_config(path):
 class ModelConfig:
     def __init__(self, config=None):
         config = get_default_config() if config is None else config
+        if not isinstance(config, dict) or not isinstance(config.get("model"), dict):
+            raise ValueError("Configuration must contain a 'model' mapping")
         model = config["model"]
+        required = (
+            "vocab_size",
+            "hidden_size",
+            "intermediate_size",
+            "num_layers",
+            "num_attention_heads",
+            "max_position_embeddings",
+            "rope_theta",
+            "dropout",
+            "bias",
+        )
+        missing = [key for key in required if key not in model]
+        if missing:
+            raise ValueError("Missing model configuration field(s): " + ", ".join(missing))
+
         self.vocab_size = int(model["vocab_size"])
         self.hidden_size = int(model["hidden_size"])
         self.intermediate_size = int(model["intermediate_size"])
@@ -28,6 +45,20 @@ class ModelConfig:
         self.dropout = float(model["dropout"])
         self.bias = bool(model["bias"])
 
+        if self.vocab_size < 4:
+            raise ValueError("vocab_size must be at least 4")
+        if self.hidden_size <= 0 or self.intermediate_size <= 0:
+            raise ValueError("hidden_size and intermediate_size must be positive")
+        if self.num_layers <= 0 or self.num_attention_heads <= 0:
+            raise ValueError("num_layers and num_attention_heads must be positive")
+        if self.num_key_value_heads <= 0:
+            raise ValueError("num_key_value_heads must be positive")
+        if self.max_position_embeddings < 2:
+            raise ValueError("max_position_embeddings must be at least 2")
+        if self.rope_theta <= 0:
+            raise ValueError("rope_theta must be greater than 0")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be in the range [0, 1)")
         if self.hidden_size % self.num_attention_heads:
             raise ValueError("hidden_size must be divisible by num_attention_heads")
         if self.num_attention_heads % self.num_key_value_heads:
