@@ -29,4 +29,5 @@ runtime:
 # Built-in corpus keeps the first smoke training run self-contained.
 data:
   dataset_name: "lapis-smoke"
-  max_seq_length: 128
+  # One extra token is retained by TextDataset for the causal target shift.
+  max_seq_length: 127
