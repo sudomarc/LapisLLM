@@ -15,6 +15,7 @@ from lapis.tokenizer.tokenizer import Tokenizer
 
 
 def resolve_device(requested: str) -> torch.device:
+    """Resolve and validate the requested inference device."""
     if requested == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(requested)
@@ -28,6 +29,7 @@ def resolve_device(requested: str) -> torch.device:
 
 
 def load_model(checkpoint_path: str, device: torch.device) -> tuple[LapisModel, dict]:
+    """Load a validated checkpoint and instantiate its model."""
     checkpoint = load_checkpoint(checkpoint_path, map_location=device)
     config = checkpoint.get("config")
     if not isinstance(config, dict) or not isinstance(config.get("model"), dict):
@@ -43,7 +45,8 @@ def load_model(checkpoint_path: str, device: torch.device) -> tuple[LapisModel, 
     return model, checkpoint
 
 
-def load_tokenizer(checkpoint_path: str, checkpoint: dict) -> Tokenizer:
+def load_tokenizer(checkpoint_path: str, checkpoint: dict, expected_vocab: int) -> Tokenizer:
+    """Load the embedded tokenizer and verify its vocabulary matches the model."""
     embedded = checkpoint.get("tokenizer_json")
     if embedded:
         tokenizer = Tokenizer.from_json(embedded)
@@ -52,12 +55,17 @@ def load_tokenizer(checkpoint_path: str, checkpoint: dict) -> Tokenizer:
     expected = checkpoint.get("tokenizer_vocab_size")
     if expected is not None and int(expected) != tokenizer.vocab_size:
         raise CheckpointError("Checkpoint tokenizer metadata does not match the tokenizer")
+    if tokenizer.vocab_size != expected_vocab:
+        raise CheckpointError(
+            "Tokenizer vocabulary size does not match the model vocabulary size"
+        )
     return tokenizer
 
 
 def sample_next_token(
     logits: torch.Tensor, temperature: float, top_k: int, top_p: float
 ) -> torch.Tensor:
+    """Sample one token with validated temperature/top-k/top-p controls."""
     if not torch.isfinite(logits).all():
         raise RuntimeError("Model produced non-finite generation logits")
     if not math.isfinite(temperature) or temperature < 0:
@@ -73,11 +81,7 @@ def sample_next_token(
     if top_k > 0:
         values, _ = torch.topk(scaled, min(top_k, scaled.size(-1)))
         cutoff = values[..., -1, None]
-        scaled = torch.where(
-            scaled < cutoff,
-            torch.full_like(scaled, float("-inf")),
-            scaled,
-        )
+        scaled = torch.where(scaled < cutoff, torch.full_like(scaled, float("-inf")), scaled)
 
     if top_p < 1.0:
         sorted_logits, sorted_indices = torch.sort(scaled, descending=True)
@@ -103,6 +107,7 @@ def generate(
     top_k: int,
     top_p: float,
 ) -> str:
+    """Generate text, left-truncating prompts that exceed model context."""
     if max_new_tokens < 0:
         raise ValueError("max_new_tokens must be non-negative")
     if not math.isfinite(temperature) or temperature < 0:
@@ -120,7 +125,6 @@ def generate(
 
     device = next(model.parameters()).device
     ids = torch.tensor([token_ids], dtype=torch.long, device=device)
-
     with torch.inference_mode():
         for _ in range(max_new_tokens):
             context = ids[:, -model.max_position_embeddings :]
@@ -129,7 +133,6 @@ def generate(
             ids = torch.cat([ids, next_id], dim=1)
             if next_id.item() == tokenizer.eos_id:
                 break
-
     return tokenizer.decode(ids[0].tolist(), skip_special_tokens=True)
 
 
@@ -155,16 +158,11 @@ def main() -> None:
 
     device = resolve_device(args.device)
     model, checkpoint = load_model(args.checkpoint, device)
-    tokenizer = load_tokenizer(args.checkpoint, checkpoint)
+    tokenizer = load_tokenizer(args.checkpoint, checkpoint, model.vocab_size)
     print(
         generate(
-            model,
-            tokenizer,
-            args.prompt,
-            args.max_new_tokens,
-            args.temperature,
-            args.top_k,
-            args.top_p,
+            model, tokenizer, args.prompt, args.max_new_tokens,
+            args.temperature, args.top_k, args.top_p,
         )
     )
 
