@@ -1,6 +1,7 @@
 import pytest
 
 from lapis.config import DataConfig, ModelConfig, TrainingConfig, get_default_config
+from lapis.config.base import load_config
 from lapis.tokenizer.tokenizer import Tokenizer
 
 
@@ -10,6 +11,12 @@ def test_load_default_config():
     assert "model" in config
     assert "training" in config
     assert "runtime" in config
+
+
+def test_config_resolution_does_not_depend_on_current_working_directory(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    config = load_config("configs/tiny.yaml")
+    assert config["model"]["vocab_size"] == 512
 
 
 def test_model_config():
