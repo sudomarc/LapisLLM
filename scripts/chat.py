@@ -11,29 +11,20 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from lapis.config.base import resolve_device
+from lapis.config.model_config import model_config_kwargs
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-from scripts.generate import sample_next_token
-
-
-def resolve_device(requested: str) -> torch.device:
-    if requested == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if requested.startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA was requested, but no CUDA device is available. "
-            "In Colab, enable Runtime > Change runtime type > T4 GPU, "
-            "or run with --device cpu."
-        )
-    return torch.device(requested)
+from scripts.generate import sample_next_token, validate_checkpoint_tokenizer
 
 
 def load_chat_model(checkpoint_path: Path, device: torch.device) -> tuple[LapisModel, Tokenizer]:
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model = LapisModel(**checkpoint["config"]["model"]).to(device)
+    tokenizer = Tokenizer.load(str(checkpoint_path.parent / "tokenizer"))
+    validate_checkpoint_tokenizer(checkpoint, tokenizer)
+    model = LapisModel(**model_config_kwargs(checkpoint["config"])).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    tokenizer = Tokenizer.load(str(checkpoint_path.parent / "tokenizer"))
     return model, tokenizer
 
 
