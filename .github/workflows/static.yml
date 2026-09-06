@@ -20,6 +20,7 @@ jobs:
   validate:
     name: Validate website
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,10 +29,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: website/package.json
+          cache-dependency-path: website/package-lock.json
       - name: Install website tooling
         working-directory: website
-        run: npm install
+        run: npm ci
       - name: Lint website
         working-directory: website
         run: npm run lint
@@ -41,12 +42,13 @@ jobs:
 
   deploy:
     name: Deploy LAPIS website to Pages
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: validate
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,13 +59,40 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: website/package.json
+          cache-dependency-path: website/package-lock.json
       - name: Install website tooling
         working-directory: website
-        run: npm install
+        run: npm ci
       - name: Build website artifact
         working-directory: website
         run: npm run build
+      - name: Verify Pages artifact
+        working-directory: website
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f index.html
+          test -f 404.html
+          test -f sitemap.xml
+          test -f robots.txt
+          test -f manifest.webmanifest
+          test -f favicon.svg
+          test -f styles.css
+          test -f script.js
+          test -f data.js
+          test -f models/index.html
+          test -f skills/index.html
+          test -f docs/index.html
+          test -f research/index.html
+          test -f roadmap/index.html
+          test -f changelog/index.html
+          test -f about/index.html
+          test -f models/lapis-tiny/index.html
+          test -f models/lapis-small/index.html
+          test -f models/lapis-1b/index.html
+          test -f models/lapis-3b/index.html
+          test -f models/lapis-7b/index.html
+          echo "GitHub Pages artifact preflight passed."
       - name: Upload website artifact
         uses: actions/upload-pages-artifact@v3
         with:
