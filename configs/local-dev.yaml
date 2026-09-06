@@ -35,4 +35,5 @@ runtime:
   compile: false
 
 data:
-  max_seq_length: 64
+  # One extra token is retained by TextDataset for the causal target shift.
+  max_seq_length: 63
