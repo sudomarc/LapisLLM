@@ -49,7 +49,6 @@ class TextDataset(Dataset):
             raise ValueError("pad_id must be non-negative")
         if not tokens:
             raise ValueError("training data must contain at least one token")
-
         needed = seq_len + 1
         self.samples: list[tuple[torch.Tensor, torch.Tensor]] = []
         for start in range(0, len(tokens), seq_len):
@@ -136,7 +135,9 @@ def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
             f"Tokenizer vocab mismatch ({tokenizer.vocab_size} != {target_vocab}); "
             "retraining tokenizer from the current corpus."
         )
-    tokenizer = Tokenizer.train_from_iterator([corpus], vocab_size=target_vocab, min_frequency=min_frequency)
+    tokenizer = Tokenizer.train_from_iterator(
+        [corpus], vocab_size=target_vocab, min_frequency=min_frequency
+    )
     tokenizer.save(str(path))
     return tokenizer
 
@@ -253,13 +254,10 @@ def resolve_tokenizer(config, corpus, resume_path, explicit_path):
 def _assert_resume_compatibility(checkpoint, config, tokenizer):
     version = int(checkpoint.get("checkpoint_version", 1))
     if version != CHECKPOINT_FORMAT_VERSION:
-        raise ValueError(
-            f"Unsupported checkpoint format version {version}; expected {CHECKPOINT_FORMAT_VERSION}"
-        )
+        raise ValueError(f"Unsupported checkpoint format version {version}; expected {CHECKPOINT_FORMAT_VERSION}")
     checkpoint_config = checkpoint.get("config")
     if not isinstance(checkpoint_config, dict):
         raise ValueError("Checkpoint is missing its configuration metadata")
-
     checkpoint_model = checkpoint_config.get("model", {})
     current_model = config.get("model", {})
     for key in MODEL_CONFIG_KEYS:
@@ -267,7 +265,6 @@ def _assert_resume_compatibility(checkpoint, config, tokenizer):
             raise ValueError(
                 f"Checkpoint model.{key}={checkpoint_model[key]!r} does not match current value {current_model[key]!r}"
             )
-
     checkpoint_training = checkpoint_config.get("training", {})
     current_training = config.get("training", {})
     for key in TRAINING_CONFIG_KEYS:
@@ -275,12 +272,10 @@ def _assert_resume_compatibility(checkpoint, config, tokenizer):
             raise ValueError(
                 f"Checkpoint training.{key}={checkpoint_training.get(key)!r} does not match current value {current_training.get(key)!r}"
             )
-
     checkpoint_data = checkpoint_config.get("data", {})
     current_data = config.get("data", {})
     if checkpoint_data.get("max_seq_length") != current_data.get("max_seq_length"):
         raise ValueError("Checkpoint data.max_seq_length does not match current configuration")
-
     if checkpoint.get("tokenizer_vocab_size") != tokenizer.vocab_size:
         raise ValueError(
             f"Checkpoint tokenizer vocabulary size {checkpoint.get('tokenizer_vocab_size')} does not match loaded tokenizer vocabulary size {tokenizer.vocab_size}"
@@ -373,7 +368,7 @@ def main() -> None:
     scheduler = build_scheduler(optimizer, training_config)
 
     optimizer_step = 0
-    epoch = 0
+    epoch = 1
     start_batch_index = 0
 
     if resume_path:
@@ -389,10 +384,10 @@ def main() -> None:
         except (RuntimeError, KeyError, ValueError) as exc:
             raise ValueError(f"Checkpoint state is incompatible with the current model: {exc}") from exc
         optimizer_step = int(checkpoint.get("step", 0))
-        epoch = int(checkpoint.get("epoch", 0))
+        epoch = int(checkpoint.get("epoch", 1))
         start_batch_index = int(checkpoint.get("batch_index", 0))
-        if optimizer_step < 0 or epoch < 0 or start_batch_index < 0:
-            raise ValueError("Checkpoint contains negative training progress")
+        if optimizer_step < 0 or epoch < 1 or start_batch_index < 0:
+            raise ValueError("Checkpoint contains invalid training progress")
         if optimizer_step > training_config.max_steps:
             raise ValueError(f"Checkpoint step {optimizer_step} exceeds configured max_steps {training_config.max_steps}")
         if checkpoint.get("python_rng_state") is not None:
@@ -411,7 +406,7 @@ def main() -> None:
     epochs_completed = 0
 
     while optimizer_step < training_config.max_steps and epochs_completed < args.epochs:
-        dataloader = _build_dataloader(dataset, training_config.micro_batch_size, args.seed, max(epoch, 1))
+        dataloader = _build_dataloader(dataset, training_config.micro_batch_size, args.seed, epoch)
         num_batches = len(dataloader)
         if num_batches == 0:
             raise ValueError("Training dataloader produced no batches")
