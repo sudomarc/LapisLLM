@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="LAPIS — an independent language model built from the ground up.">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>LAPIS — Built from the ground up.</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <header class="header">
+    <a class="logo" href="#top"><span class="logo-box">L</span><span>LAPIS</span></a>
+    <nav>
+      <a href="#project">Project</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#models">Models</a>
+      <a href="#roadmap">Roadmap</a>
+      <a class="nav-cta" href="https://github.com/sudomarc/LapisLLM" target="_blank" rel="noreferrer">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero wrap">
+      <div class="hero-copy reveal">
+        <div class="eyebrow"><span class="dot"></span> LAPIS 0.1 · RESEARCH</div>
+        <h1>Build the model.<br><span>Understand the machine.</span></h1>
+        <p>LAPIS is an independent language-model project built from the ground up — from data and tokenization to training, inference and distribution.</p>
+        <div class="actions">
+          <a class="primary" href="https://github.com/sudomarc/LapisLLM" target="_blank" rel="noreferrer">Explore LAPIS</a>
+          <a class="secondary" href="#architecture">See the architecture ↓</a>
+        </div>
+      </div>
+      <div class="hero-visual reveal" aria-hidden="true">
+        <div class="ring ring-1"></div><div class="ring ring-2"></div><div class="ring ring-3"></div>
+        <div class="core"><b>L</b><small>LANGUAGE<br>MODEL</small></div>
+        <div class="node n1">DATA</div><div class="node n2">TOKENIZER</div><div class="node n3">TRAINING</div><div class="node n4">INFERENCE</div>
+      </div>
+    </section>
+
+    <section id="project" class="section wrap reveal">
+      <div class="label">01 / THE PROJECT</div>
+      <div class="split">
+        <h2>Not a wrapper.<br><em>A model.</em></h2>
+        <div>
+          <p>LAPIS is designed as a real LLM stack, not a thin interface over somebody else’s model. The first release is intentionally small so every layer can be understood, reproduced and improved.</p>
+          <div class="stats"><div><strong>01</strong><span>Own the stack</span></div><div><strong>02</strong><span>Scale deliberately</span></div><div><strong>03</strong><span>Measure honestly</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture" class="section wrap reveal">
+      <div class="label">02 / ARCHITECTURE</div>
+      <h2>From raw text<br><em>to a usable model.</em></h2>
+      <div class="pipeline">
+        <div class="step"><i>01</i><b>DATA</b><span>collect · clean · deduplicate</span></div><div class="arrow">→</div>
+        <div class="step"><i>02</i><b>TOKENIZER</b><span>encode · pack · version</span></div><div class="arrow">→</div>
+        <div class="step hot"><i>03</i><b>TRANSFORMER</b><span>attention · RoPE · MLP</span></div><div class="arrow">→</div>
+        <div class="step"><i>04</i><b>TRAINING</b><span>loss · checkpoints · eval</span></div><div class="arrow">→</div>
+        <div class="step"><i>05</i><b>INFERENCE</b><span>generate · stream · serve</span></div>
+      </div>
+      <div class="tech-note"><code>decoder-only causal Transformer</code><p>Configurable depth, hidden size, attention heads, context length and training parameters. The same foundation can move from tiny experiments to distributed training.</p></div>
+    </section>
+
+    <section id="models" class="section wrap reveal">
+      <div class="label">03 / MODEL FAMILY</div>
+      <div class="heading-row"><h2>One family.<br><em>Many scales.</em></h2><p>Start small. Learn everything. Increase scale only when the foundation is ready.</p></div>
+      <div class="models">
+        <div class="model head"><span>MODEL</span><span>STATUS</span><span>ROLE</span></div>
+        <div class="model"><strong>Lapis Tiny</strong><b class="live">IN DEVELOPMENT</b><span>Architecture & training validation</span></div>
+        <div class="model"><strong>Lapis Small</strong><b>PLANNED</b><span>Stronger base-language experiments</span></div>
+        <div class="model"><strong>Lapis 1B</strong><b>PLANNED</b><span>First meaningful scale-up</span></div>
+        <div class="model"><strong>Lapis 3B</strong><b>PLANNED</b><span>General-purpose research model</span></div>
+        <div class="model"><strong>Lapis 7B+</strong><b>LONG TERM</b><span>Large-scale training & ecosystem</span></div>
+      </div>
+    </section>
+
+    <section id="roadmap" class="section wrap reveal">
+      <div class="label">04 / ROADMAP</div>
+      <h2>Build. Measure.<br><em>Scale.</em></h2>
+      <div class="roadmap">
+        <article class="current"><b>01</b><div><small>NOW</small><h3>Foundation</h3><p>Repository, tokenizer, tiny Transformer and reproducible training infrastructure.</p></div></article>
+        <article><b>02</b><div><small>NEXT</small><h3>Pretraining</h3><p>Data pipeline, larger corpora, stronger evaluation and systematic experiments.</p></div></article>
+        <article><b>03</b><div><small>LATER</small><h3>Post-training</h3><p>Instruction tuning, preference optimization and safety evaluation.</p></div></article>
+        <article><b>04</b><div><small>FUTURE</small><h3>Ecosystem</h3><p>Local runtimes, API serving, open-weight releases and client applications.</p></div></article>
+      </div>
+    </section>
+
+    <section class="manifesto reveal"><div class="wrap"><div class="label">05 / THE IDEA</div><blockquote>“Understand the machine<br><em>by building the machine.</em>”</blockquote><p>LAPIS is a long-term experiment in understanding modern language models by engineering every layer rather than only consuming the final interface.</p></div></section>
+
+    <section class="final wrap reveal"><div class="label">06 / FOLLOW THE BUILD</div><h2>The model is only<br><em>the beginning.</em></h2><p>Follow the implementation, experiments and releases in the repository.</p><a class="primary" href="https://github.com/sudomarc/LapisLLM" target="_blank" rel="noreferrer">Open LapisLLM ↗</a></section>
+  </main>
+
+  <footer class="footer wrap"><div class="logo"><span class="logo-box">L</span><span>LAPIS</span></div><span>Independent LLM research</span><a href="#top">Back to top ↑</a></footer>
+  <script src="./script.js"></script>
+</body>
+</html>
