@@ -2,7 +2,7 @@
 
 **Lapis is a from-scratch decoder-only Transformer language model and training stack written in Python/PyTorch.**
 
-The project exists to make LLM engineering inspectable: tokenizer, data pipeline, Transformer architecture, optimization, checkpointing, evaluation, inference, and serving are explicit parts of the repository.
+The project makes the tokenizer, data pipeline, Transformer architecture, optimization, checkpointing, evaluation, inference, and serving explicit and inspectable.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main&label=tests)](https://github.com/sudomarc/LapisLLM/actions/workflows/tests.yml)
 [![Pages](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/static.yml?branch=main&label=website)](https://github.com/sudomarc/LapisLLM/actions/workflows/static.yml)
@@ -10,114 +10,140 @@ The project exists to make LLM engineering inspectable: tokenizer, data pipeline
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Current status — Lapis 0.1.1: Correctness.** The project is experimental and is not yet a competitive pretrained foundation model. Benchmark and capability claims are intentionally withheld until reproducible validation exists.
+> **Current status — Lapis 0.1.2: correctness and reproducibility hardening.** The project is experimental. No benchmark or foundation-model capability claims are made here.
 
-## Why Lapis
+## Architecture
 
-Lapis takes a build-first approach to language models. The goal is not to hide the implementation behind a hosted endpoint or a large training framework; it is to make the mechanics understandable enough to debug, reproduce, and extend.
+Lapis uses a decoder-only causal Transformer with:
 
-Current model components include:
-
-- decoder-only causal language modeling
 - RMSNorm
 - Rotary Position Embeddings (RoPE)
 - Grouped Query Attention (GQA)
 - SwiGLU feed-forward blocks
 - configurable model dimensions
 - ByteLevel BPE tokenization
-- PyTorch training and checkpointing
+- PyTorch training, checkpointing, evaluation, generation, chat, and serving entry points
 
-## Models
+## Development model
 
-The development model is **Lapis Tiny**. Its current development configuration uses a vocabulary size of 256, hidden size 128, two Transformer layers, four query heads, two key/value heads, and a 128-token context. The exact instantiated parameter count is reported by the training code rather than hard-coded here.
+`configs/tiny.yaml` is the canonical development configuration. It currently defines a 4096-token vocabulary, 256 hidden units, 1024 intermediate units, 6 Transformer layers, 8 query heads, 4 key/value heads, and a 512-token model context. Training uses a 511-token data sequence length so one additional token can be retained for next-token targets.
 
-Larger configurations such as Lapis Small, Lapis 1B, Lapis 3B, and Lapis 7B are roadmap targets, not released or benchmarked models.
+The repository also includes `configs/local-dev.yaml` for a smaller CPU-oriented development path. Larger configurations such as Lapis 1B, 3B, and 7B are roadmap targets, not released or benchmarked models.
 
 ## Quickstart
 
-Requirements: Python 3.11+ and a development installation of PyTorch.
+Requirements: Python 3.11+.
 
 ```bash
 git clone https://github.com/sudomarc/LapisLLM.git
 cd LapisLLM
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install -e .
 python -m pytest
-python scripts/train.py --config configs/tiny.yaml
+python scripts/train.py --config configs/local-dev.yaml --device cpu --epochs 1
 ```
 
-The tiny path is designed for local development and can run on CPU. Larger training is a future scaling step.
+Training creates checkpoints and tokenizer artifacts locally under the requested checkpoint directory. Generated artifacts are intentionally ignored by Git.
 
-## Evaluation philosophy
+## Training and resume
+
+A checkpoint stores model, optimizer, scheduler, configuration, tokenizer metadata, training progress, and RNG state. Checkpoint writes are atomic so an interrupted write does not replace the previous complete `.pt` file.
+
+Resume is strict: the checkpoint format, model configuration, training schedule, data sequence configuration, tokenizer version, and tokenizer vocabulary must match the current run. The checkpoint tokenizer is used automatically; `--resume` cannot be combined with `--tokenizer`.
+
+The current data loader uses a deterministic per-epoch generator and stores the next batch position, allowing single-process mid-epoch continuation. Multi-worker and distributed replay are not promised.
+
+Example:
+
+```bash
+python scripts/train.py --config configs/local-dev.yaml --device cpu --epochs 1 --checkpoint /tmp/lapis/checkpoint.pt
+python scripts/train.py --config configs/local-dev.yaml --device cpu --epochs 1 \
+  --resume /tmp/lapis/checkpoint.pt --checkpoint /tmp/lapis/resumed.pt
+```
+
+## Evaluation and generation
+
+Evaluation is an explicit corpus-level loss/perplexity smoke test unless `--data` is supplied:
+
+```bash
+python scripts/evaluate.py --checkpoint /tmp/lapis/resumed.pt --device cpu
+```
+
+Generation validates its inputs before execution. `temperature=0` selects greedy decoding; invalid `top_k`, `top_p`, or token counts are rejected; prompts beyond the model context are rejected rather than silently truncated.
+
+```bash
+python scripts/generate.py --checkpoint /tmp/lapis/resumed.pt --device cpu \
+  --prompt "Lapis" --max-new-tokens 32 --temperature 0
+```
+
+## Data preparation
+
+The packaged `prepare_data` command concatenates sorted UTF-8 `.txt` files deterministically:
+
+```bash
+prepare_data --input-dir data/raw --output data/combined.txt
+```
+
+Empty input directories and corpora containing only blank files fail explicitly.
+
+## Reproducibility
+
+Use `--seed` for deterministic single-process experiments. Python and PyTorch RNG state is stored in checkpoints. The deterministic data-loader generator is seeded independently per epoch. Exact bitwise determinism across different hardware, CUDA versions, distributed workers, or kernels is not guaranteed.
+
+## Validation philosophy
 
 Lapis uses evidence gates:
 
-1. **Correctness** — shapes, causality, masking, tokenizer behavior, gradients, and checkpoint state.
-2. **Learning** — tiny-dataset overfitting.
-3. **Generalization** — held-out loss and perplexity.
-4. **Generation** — deterministic and sampling regression tests.
-5. **Scaling** — larger configurations only after the earlier stages are reproducible.
+1. correctness — tensor shapes, causality, masking, tokenizer behavior, gradients, checkpoint compatibility;
+2. learning — tiny-dataset overfitting;
+3. generalization — held-out loss and perplexity;
+4. generation — deterministic and sampling edge cases;
+5. scaling — larger configurations only after earlier stages are reproducible.
 
-No benchmark result is published in this repository until the underlying experiment is reproducible.
-
-## Skills
-
-The website includes a Lapis-native skills ecosystem for modular developer workflows. Skills are versioned packages with a normative `SKILL.md`, explicit inputs/outputs, workflow stages, limitations, and safety boundaries.
-
-Current skill catalog:
-
-- Security Audit
-- Pentest Planner
-- Reverse Engineer
-- PR Engineer
-- Docs Writer
-- Benchmark
-- Dataset Cleaner
-- Prompt Optimizer
-- Web Tester
-- Release Manager
-
-These packages are an experimental specification layer; they do not imply autonomous access to external systems.
+No benchmark result is published until the underlying experiment is reproducible.
 
 ## Repository layout
 
 ```text
 LapisLLM/
-├── lapis/                 # model, tokenizer, data, config, training helpers
-├── scripts/               # train, evaluate, generate, chat, serve
-├── configs/               # reproducible YAML experiments
-├── tests/                 # correctness and integration tests
+├── lapis/                 # model, tokenizer, data, config, helpers
+├── scripts/               # installed train/evaluate/generate/chat/serve CLIs
+├── configs/               # reproducible YAML configurations
+├── tests/                 # unit, integration, and release-hardening tests
 ├── docs/                  # technical project documentation
-├── website/               # static developer platform / GitHub Pages site
+├── website/               # static GitHub Pages site
+├── training_data/         # repository-managed training corpus samples
 ├── CHANGELOG.md
 ├── AGENTS.md
 ├── LICENSE
 └── README.md
 ```
 
-## Reproducibility
-
-Checkpoints preserve model, optimizer, scheduler, training/configuration state, tokenizer references, and RNG state. Training accepts an explicit seed. Exact mid-epoch data-loader replay is still being hardened.
-
 ## Known limitations
 
-Lapis is an experimental research/learning project. Large-scale distributed training, mixed-precision training, efficient KV-cache generation, comprehensive benchmark evaluation, production-grade web-scale data processing, and exact mid-epoch replay are not yet complete.
+Large-scale distributed training, mixed-precision training, efficient KV-cache generation, comprehensive benchmark evaluation, and web-scale data processing are not implemented. CUDA execution is supported by the model/training paths when a compatible CUDA environment is available, but this repository does not provide a GPU runner for guaranteed CI coverage.
 
-## Contributing
+Checkpoint loading accepts native PyTorch `.pt` files and should therefore be treated as loading trusted checkpoint artifacts. Do not load untrusted checkpoints.
 
-Keep changes focused, add tests for behavioral changes, run the test suite and Ruff, and document architecture or behavior changes.
+## Development checks
 
 ```bash
-python -m pytest
-ruff check .
+python -m pytest -q
+python -m ruff check .
+python -m compileall -q lapis scripts tests
+python -m pip wheel . --no-deps --wheel-dir dist
 ```
 
-See [`AGENTS.md`](AGENTS.md) for repository engineering rules.
+The CI workflow additionally runs CPU training, resume, evaluation, generation, and installed CLI smoke tests.
+
+## Skills
+
+The website includes an experimental Lapis-native skills specification layer. Skills are versioned packages with explicit inputs, outputs, workflow stages, limitations, and safety boundaries; they do not imply autonomous access to external systems.
 
 ## Website
 
-The `website/` directory is a static developer platform for Models, Skills, Docs, Research, Roadmap, Changelog, and About. It is deployed to GitHub Pages and does not require a permanent server.
+The `website/` directory is a static developer platform for Models, Skills, Docs, Research, Roadmap, Changelog, and About. It is deployed to GitHub Pages.
 
 Local website checks:
 
