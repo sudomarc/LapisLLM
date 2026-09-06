@@ -15,7 +15,14 @@ from lapis.checkpoint import CheckpointError, load_checkpoint
 from lapis.config.model_config import ModelConfig
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-from scripts.train import DEFAULT_CORPUS, TextDataset, resolve_device, resolve_training_seq_len, split_corpus
+from scripts.train import (
+    DEFAULT_CORPUS,
+    TextDataset,
+    load_yaml,
+    resolve_device,
+    resolve_training_seq_len,
+    split_corpus,
+)
 
 
 def main() -> None:
@@ -25,12 +32,14 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
-    config = torch.load(args.checkpoint, map_location="cpu", weights_only=True).get("config")
+    checkpoint = load_checkpoint(args.checkpoint, map_location="cpu")
+    config = checkpoint["config"]
     if not isinstance(config, dict):
         raise CheckpointError("Checkpoint does not contain a valid configuration")
     device = resolve_device(config, args.device)
-    checkpoint = load_checkpoint(args.checkpoint, map_location=device)
-    config = checkpoint["config"]
+    if device.type != "cpu":
+        checkpoint = load_checkpoint(args.checkpoint, map_location=device)
+        config = checkpoint["config"]
 
     try:
         model = LapisModel(**config["model"]).to(device)
