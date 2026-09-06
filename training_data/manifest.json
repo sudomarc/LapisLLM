@@ -1,0 +1,82 @@
+{
+  "project": "LapisLLM",
+  "collector": "scripts/fetch_training_data.py",
+  "generated_at_utc": "2026-09-06T03:56:14Z",
+  "settings": {
+    "ascii_only": false,
+    "keep_markdown": false,
+    "wiki_limit": 3,
+    "max_wiki_articles": 40,
+    "max_doc_files": 20
+  },
+  "wikipedia": {
+    "search_topics": [
+      "machine learning",
+      "supervised learning",
+      "unsupervised learning",
+      "neural network",
+      "deep learning",
+      "transformer (machine learning model)",
+      "attention (machine learning)",
+      "natural language processing",
+      "large language model",
+      "language model",
+      "generative artificial intelligence",
+      "reinforcement learning",
+      "representation learning",
+      "word embedding"
+    ],
+    "articles_requested": 34,
+    "articles_collected": 34
+  },
+  "github": {
+    "repositories": [
+      {
+        "repo": "pytorch/pytorch",
+        "branch": "main",
+        "files_requested": 20,
+        "files_collected": 20
+      },
+      {
+        "repo": "huggingface/transformers",
+        "branch": "main",
+        "files_requested": 20,
+        "files_collected": 20
+      },
+      {
+        "repo": "openai/gpt-2",
+        "branch": "master",
+        "files_requested": 1,
+        "files_collected": 1
+      },
+      {
+        "repo": "karpathy/nanoGPT",
+        "branch": "master",
+        "files_requested": 4,
+        "files_collected": 4
+      },
+      {
+        "repo": "facebookresearch/llama",
+        "branch": "main",
+        "files_requested": 2,
+        "files_collected": 2
+      }
+    ],
+    "documents_collected": 47
+  },
+  "outputs": {
+    "wikipedia.txt": {
+      "bytes": 853875,
+      "records": 34
+    },
+    "github.txt": {
+      "bytes": 590934,
+      "records": 47
+    },
+    "combined.txt": {
+      "bytes": 1445478,
+      "records": 81,
+      "approx_tokens": 190449
+    }
+  }
+}

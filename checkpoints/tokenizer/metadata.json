@@ -1,0 +1,14 @@
+{
+  "tokenizer_version": "lapis-tokenizer-v3-bpe-bytelevel",
+  "type": "bpe",
+  "pre_tokenizer": "ByteLevel",
+  "normalizer": "NFKC",
+  "model": "BPE",
+  "vocab_size": 256,
+  "special_tokens": {
+    "bos": "<s>",
+    "eos": "</s>",
+    "pad": "<p>",
+    "unk": "<u>"
+  }
+}
