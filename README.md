@@ -29,7 +29,7 @@ Current model components include:
 
 ## Models
 
-The development model is **Lapis Tiny**. Its current development configuration uses a vocabulary size of 256, hidden size 128, two Transformer layers, four query heads, two key/value heads, and a 128-token context. The exact instantiated parameter count is reported by the training code rather than hard-coded here.
+The development model is **Lapis Tiny**. Its current development configuration is intentionally small for local iteration. The exact instantiated parameter count is reported by the training code rather than hard-coded here.
 
 Larger configurations such as Lapis Small, Lapis 1B, Lapis 3B, and Lapis 7B are roadmap targets, not released or benchmarked models.
 
@@ -47,7 +47,25 @@ python -m pytest
 python scripts/train.py --config configs/tiny.yaml
 ```
 
-The tiny path is designed for local development and can run on CPU. Larger training is a future scaling step.
+### CPU-only fast training
+
+When a Colab account or local machine has no usable accelerator, use the dedicated CPU profile instead of trying to train the larger configuration unchanged:
+
+```bash
+python scripts/train.py --config configs/cpu-fast.yaml --device cpu --epochs 1
+```
+
+For a one-off fast run from another configuration, the training entrypoint also supports:
+
+```bash
+python scripts/train.py --config configs/tiny.yaml --cpu-fast --epochs 1
+```
+
+`--cpu-fast` reduces model width, layer count, and context length while keeping the tokenizer vocabulary compatible with the Tiny setup. It is intended for fast iteration and smoke experiments, not final model training. It cannot be combined with `--resume` because the model architecture changes.
+
+CPU runtime settings are configurable under `runtime.cpu` (`threads`, `interop_threads`, `dataloader_workers`, and `pin_memory`). The trainer also reports the effective CPU thread configuration at startup.
+
+The normal `tiny.yaml` path remains available for the full configured experiment. The CPU-fast path is deliberately separate so that CPU development does not silently change the architecture of an existing training run.
 
 ## Evaluation philosophy
 

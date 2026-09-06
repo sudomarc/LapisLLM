@@ -17,6 +17,12 @@ from torch.utils.data import DataLoader, Dataset
 
 from lapis.config.base import resolve_device as resolve_requested_device
 from lapis.config.model_config import ModelConfig
+from lapis.config.runtime_config import (
+    apply_cpu_fast_profile,
+    configure_cpu_runtime,
+    get_dataloader_options,
+    validate_fast_profile,
+)
 from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
@@ -272,16 +278,29 @@ def main() -> None:
     parser.add_argument("--data", default=None, help="Optional UTF-8 text file")
     parser.add_argument("--tokenizer", default=None, help="Optional trained tokenizer directory")
     parser.add_argument(
+        "--cpu-fast",
+        action="store_true",
+        help="Use a small CPU-oriented model/profile for fast training iterations; incompatible with --resume.",
+    )
+    parser.add_argument(
         "--checkpoint",
         default="checkpoints/latest.pt",
         help="Output checkpoint path (defaults to checkpoints/latest.pt)",
     )
     args = parser.parse_args()
 
+    if args.cpu_fast and args.resume:
+        raise ValueError("--cpu-fast cannot resume a checkpoint with a different model architecture")
+
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     config = load_yaml(args.config)
+    if args.cpu_fast:
+        config = apply_cpu_fast_profile(config)
+        validate_fast_profile(config)
+        print("CPU-fast profile enabled: using a reduced model and sequence length for iteration speed.")
+
     corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
     tokenizer = resolve_tokenizer(config, corpus, args.resume, args.tokenizer)
 
@@ -289,6 +308,10 @@ def main() -> None:
     model_config = ModelConfig(config)
     training_config = TrainingConfig(config)
     device = resolve_device(config, args.device)
+    if args.cpu_fast and device.type != "cpu":
+        raise ValueError("--cpu-fast requires CPU; remove --device cuda or set --device cpu")
+    if device.type == "cpu":
+        configure_cpu_runtime(config, device)
     dtype = resolve_dtype(config, device)
     seq_len = resolve_training_seq_len(model_config, config)
 
@@ -304,6 +327,7 @@ def main() -> None:
         batch_size=training_config.micro_batch_size,
         shuffle=True,
         drop_last=False,
+        **get_dataloader_options(config, device),
     )
 
     model = LapisModel(
@@ -323,9 +347,16 @@ def main() -> None:
     print("Model: Lapis Small")
     print(f"Tokenizer: {tokenizer}")
     print(f"Device: {device} | dtype: {dtype}")
+    if device.type == "cpu":
+        print(f"CPU threads: {torch.get_num_threads()} | interop threads: {torch.get_num_interop_threads()}")
     print(f"Parameters: {breakdown['total']:,}")
     print(f"Vocabulary: {tokenizer.vocab_size:,}")
     print(f"Tokens: {len(tokens):,} | dataset samples: {len(dataset)} | sequence length: {seq_len}")
+    print(
+        f"Micro-batch: {training_config.micro_batch_size} | "
+        f"gradient accumulation: {training_config.gradient_accumulation_steps} | "
+        f"effective batch: {training_config.get_effective_batch_size()}"
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
