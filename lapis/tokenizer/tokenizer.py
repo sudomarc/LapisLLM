@@ -11,7 +11,7 @@ try:
     from tokenizers.normalizers import NFKC
     from tokenizers.pre_tokenizers import ByteLevel
     from tokenizers.trainers import BpeTrainer
-except ImportError as exc:  # pragma: no cover - exercised only on missing dependency
+except ImportError as exc:  # pragma: no cover
     HFTokenizer = None
     BPE = None
     ByteLevelDecoder = None
@@ -24,12 +24,7 @@ else:
 
 
 class Tokenizer:
-    """LAPIS BPE tokenizer.
-
-    Uses Hugging Face Tokenizers' native BPE implementation with ByteLevel
-    pre-tokenization so the vocabulary can grow with the training corpus while
-    remaining byte-complete for arbitrary UTF-8 input.
-    """
+    """LAPIS BPE tokenizer backed by Hugging Face Tokenizers."""
 
     VERSION = "lapis-tokenizer-v3-bpe-bytelevel"
     SPECIAL_TOKENS = ("<s>", "</s>", "<p>", "<u>")
@@ -42,6 +37,8 @@ class Tokenizer:
         self.pad_id = self._required_id(self.pad_token)
         self.unk_id = self._required_id(self.unk_token)
         self.vocab_size = int(self._tokenizer.get_vocab_size())
+        if self.vocab_size < len(self.SPECIAL_TOKENS):
+            raise ValueError("Tokenizer vocabulary is smaller than the required special-token set")
 
     @staticmethod
     def _require_dependency() -> None:
@@ -74,6 +71,10 @@ class Tokenizer:
         vocab_size: int = 512,
         min_frequency: int = 1,
     ) -> "Tokenizer":
+        if int(vocab_size) < len(cls.SPECIAL_TOKENS):
+            raise ValueError("vocab_size is too small for the required special tokens")
+        if int(min_frequency) <= 0:
+            raise ValueError("min_frequency must be positive")
         tokenizer = cls.create_untrained()
         trainer = BpeTrainer(
             vocab_size=int(vocab_size),
@@ -93,6 +94,15 @@ class Tokenizer:
         vocab_size: int = 32000,
         min_frequency: int = 2,
     ) -> "Tokenizer":
+        if not files:
+            raise ValueError("At least one tokenizer training file is required")
+        for file in files:
+            if not Path(file).is_file():
+                raise FileNotFoundError(f"Tokenizer training file not found: {file}")
+        if int(vocab_size) < len(cls.SPECIAL_TOKENS):
+            raise ValueError("vocab_size is too small for the required special tokens")
+        if int(min_frequency) <= 0:
+            raise ValueError("min_frequency must be positive")
         tokenizer = cls.create_untrained()
         trainer = BpeTrainer(
             vocab_size=int(vocab_size),
@@ -108,13 +118,31 @@ class Tokenizer:
     @classmethod
     def load(cls, path: str) -> "Tokenizer":
         cls._require_dependency()
-        tokenizer_path = Path(path)
+        tokenizer_path = Path(path).expanduser()
         if tokenizer_path.is_dir():
             tokenizer_path = tokenizer_path / "tokenizer.json"
+        if not tokenizer_path.is_file():
+            raise FileNotFoundError(f"Tokenizer file not found: {tokenizer_path}")
         backend = HFTokenizer.from_file(str(tokenizer_path))
-        return cls(backend)
+        tokenizer = cls(backend)
+
+        metadata_path = tokenizer_path.with_name("metadata.json")
+        if metadata_path.is_file():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"Invalid tokenizer metadata: {metadata_path}") from exc
+            if metadata.get("tokenizer_version") != cls.VERSION:
+                raise ValueError("Tokenizer metadata version is incompatible")
+            if int(metadata.get("vocab_size", -1)) != tokenizer.vocab_size:
+                raise ValueError("Tokenizer metadata vocabulary size is inconsistent")
+            if tuple(metadata.get("special_tokens", {}).get(name) for name in ("bos", "eos", "pad", "unk")) != cls.SPECIAL_TOKENS:
+                raise ValueError("Tokenizer metadata special tokens are inconsistent")
+        return tokenizer
 
     def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
         encoding = self._tokenizer.encode(text, add_special_tokens=False)
         ids = list(encoding.ids)
         if add_special_tokens:
@@ -127,17 +155,14 @@ class Tokenizer:
     def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
         ids = [int(idx) for idx in token_ids]
         if skip_special_tokens:
-            ids = [
-                idx
-                for idx in ids
-                if idx not in {self.bos_id, self.eos_id, self.pad_id}
-            ]
+            ids = [idx for idx in ids if idx not in {self.bos_id, self.eos_id, self.pad_id}]
         return self._tokenizer.decode(ids, skip_special_tokens=False)
 
     def save(self, path: str) -> None:
-        directory = Path(path)
+        directory = Path(path).expanduser()
         directory.mkdir(parents=True, exist_ok=True)
-        self._tokenizer.save(str(directory / "tokenizer.json"))
+        tokenizer_path = directory / "tokenizer.json"
+        self._tokenizer.save(str(tokenizer_path))
         metadata = {
             "tokenizer_version": self.VERSION,
             "type": "bpe",
@@ -152,8 +177,9 @@ class Tokenizer:
                 "unk": self.unk_token,
             },
         }
-        with (directory / "metadata.json").open("w", encoding="utf-8") as handle:
-            json.dump(metadata, handle, ensure_ascii=False, indent=2)
+        (directory / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     def __len__(self) -> int:
         return self.vocab_size
