@@ -4,7 +4,7 @@
   "pre_tokenizer": "ByteLevel",
   "normalizer": "NFKC",
   "model": "BPE",
-  "vocab_size": 256,
+  "vocab_size": 4096,
   "special_tokens": {
     "bos": "<s>",
     "eos": "</s>",
