@@ -9,13 +9,36 @@ import random
 from pathlib import Path
 
 import torch
-import yaml
 from torch.utils.data import DataLoader, Dataset
 
+from lapis.config.base import load_config, resolve_path
 from lapis.config.model_config import ModelConfig
 from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
+
+CHECKPOINT_FORMAT_VERSION = 2
+MODEL_CONFIG_KEYS = (
+    "vocab_size",
+    "hidden_size",
+    "intermediate_size",
+    "num_layers",
+    "num_attention_heads",
+    "num_key_value_heads",
+    "max_position_embeddings",
+    "rope_theta",
+    "dropout",
+    "bias",
+)
+TRAINING_CONFIG_KEYS = (
+    "learning_rate",
+    "weight_decay",
+    "warmup_steps",
+    "batch_size",
+    "micro_batch_size",
+    "gradient_accumulation_steps",
+    "gradient_clip",
+)
 
 DEFAULT_CORPUS = """
 LAPIS is an independent language model research project.
@@ -33,25 +56,26 @@ class TextDataset(Dataset):
     def __init__(self, tokens: list[int], seq_len: int, pad_id: int):
         if seq_len < 2:
             raise ValueError("seq_len must be at least 2")
+        if pad_id < 0:
+            raise ValueError("pad_id must be non-negative")
+        if not tokens:
+            raise ValueError("training data must contain at least one token")
+
         needed = seq_len + 1
         self.samples: list[tuple[torch.Tensor, torch.Tensor]] = []
-        for start in range(0, max(1, len(tokens) - 1), seq_len):
-            chunk = tokens[start : start + needed]
+        for start in range(0, len(tokens), seq_len):
+            chunk = list(tokens[start : start + needed])
             real_length = len(chunk)
             if real_length < needed:
-                chunk += [pad_id] * (needed - real_length)
-            sample = torch.tensor(chunk[:needed], dtype=torch.long)
+                chunk.extend([pad_id] * (needed - real_length))
+            sample = torch.tensor(chunk, dtype=torch.long)
             labels = sample.clone()
             if real_length < needed:
                 labels[real_length:] = -100
             self.samples.append((sample, labels))
+
         if not self.samples:
-            self.samples.append(
-                (
-                    torch.full((needed,), pad_id, dtype=torch.long),
-                    torch.full((needed,), -100, dtype=torch.long),
-                )
-            )
+            raise ValueError("training data produced no samples")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -61,18 +85,28 @@ class TextDataset(Dataset):
 
 
 def load_yaml(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+    """Compatibility wrapper around the canonical configuration loader."""
+    return load_config(path)
 
 
 def resolve_device(config: dict, requested: str | None) -> torch.device:
-    value = requested or config.get("runtime", {}).get("device", "auto")
+    value = str(requested or config.get("runtime", {}).get("device", "auto")).lower()
     if value == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if value.startswith("cuda") and not torch.cuda.is_available():
-        print("CUDA requested but unavailable; falling back to CPU.")
-        return torch.device("cpu")
-    return torch.device(value)
+        value = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        device = torch.device(value)
+    except RuntimeError as exc:
+        raise ValueError(f"Invalid device: {value}") from exc
+
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA was explicitly requested but is unavailable")
+        if device.index is not None and device.index >= torch.cuda.device_count():
+            raise RuntimeError(
+                f"CUDA device index {device.index} is unavailable; "
+                f"found {torch.cuda.device_count()} device(s)"
+            )
+    return device
 
 
 def resolve_dtype(config: dict, device: torch.device) -> torch.dtype:
@@ -85,17 +119,28 @@ def resolve_dtype(config: dict, device: torch.device) -> torch.dtype:
         "bfloat16": torch.bfloat16,
         "bf16": torch.bfloat16,
     }
-    dtype = mapping.get(requested, torch.float32)
-    if device.type == "cpu" and dtype in (torch.float16, torch.bfloat16):
-        return torch.float32
-    return dtype
+    if requested not in mapping:
+        raise ValueError(f"Unsupported runtime.dtype: {requested}")
+    if device.type == "cpu" and mapping[requested] != torch.float32:
+        raise ValueError("CPU training currently supports runtime.dtype=float32 only")
+    return mapping[requested]
+
+
+def validate_runtime_config(config: dict) -> None:
+    runtime = config.get("runtime", {})
+    if not isinstance(runtime, dict):
+        raise ValueError("configuration.runtime must be a mapping")
+    if runtime.get("compile", False):
+        raise ValueError("runtime.compile is not supported by this release")
 
 
 def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
     tokenizer_cfg = config.get("tokenizer", {})
-    path = Path(tokenizer_cfg.get("path", "artifacts/tokenizer"))
+    path = resolve_path(tokenizer_cfg.get("path", "artifacts/tokenizer"))
     tokenizer_file = path / "tokenizer.json"
-    target_vocab = int(tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"]))
+    target_vocab = int(
+        tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"])
+    )
     min_frequency = int(tokenizer_cfg.get("min_frequency", 1))
 
     if tokenizer_file.exists():
@@ -116,30 +161,72 @@ def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
     return tokenizer
 
 
-def save_checkpoint(path: Path, model, optimizer, scheduler, step, epoch, config, tokenizer):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-            "step": step,
-            "epoch": epoch,
-            "config": config,
-            "tokenizer_version": tokenizer.VERSION,
-            "python_rng_state": random.getstate(),
-            "torch_rng_state": torch.get_rng_state().clone().cpu(),
-            "cuda_rng_state": [state.clone().cpu() for state in torch.cuda.get_rng_state_all()]
+def _checkpoint_payload(
+    model,
+    optimizer,
+    scheduler,
+    step,
+    epoch,
+    batch_index,
+    config,
+    tokenizer,
+):
+    return {
+        "checkpoint_version": CHECKPOINT_FORMAT_VERSION,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+        "step": int(step),
+        "epoch": int(epoch),
+        "batch_index": int(batch_index),
+        "config": config,
+        "tokenizer_version": tokenizer.VERSION,
+        "tokenizer_vocab_size": tokenizer.vocab_size,
+        "python_rng_state": random.getstate(),
+        "torch_rng_state": torch.get_rng_state().clone().cpu(),
+        "cuda_rng_state": (
+            [state.clone().cpu() for state in torch.cuda.get_rng_state_all()]
             if torch.cuda.is_available()
-            else None,
-        },
-        path,
+            else None
+        ),
+    }
+
+
+def save_checkpoint(
+    path: Path,
+    model,
+    optimizer,
+    scheduler,
+    step,
+    epoch,
+    batch_index,
+    config,
+    tokenizer,
+):
+    """Write a complete checkpoint atomically, then persist its tokenizer."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _checkpoint_payload(
+        model,
+        optimizer,
+        scheduler,
+        step,
+        epoch,
+        batch_index,
+        config,
+        tokenizer,
     )
+    temp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        torch.save(payload, temp_path)
+        temp_path.replace(path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
     tokenizer.save(str(path.parent / "tokenizer"))
 
 
 def restore_torch_rng_state(state) -> None:
-    """Restore RNG state with compatibility for older/corrupted checkpoints."""
+    """Restore RNG state with validation for older/corrupted checkpoints."""
     if state is None:
         return
     if not isinstance(state, torch.Tensor):
@@ -147,7 +234,7 @@ def restore_torch_rng_state(state) -> None:
     else:
         state = state.detach().to(device="cpu", dtype=torch.uint8)
     if state.numel() == 0:
-        raise ValueError("Checkpoint contains an empty torch RNG state.")
+        raise ValueError("Checkpoint contains an empty torch RNG state")
     torch.set_rng_state(state.contiguous())
 
 
@@ -160,7 +247,7 @@ def restore_cuda_rng_state(state) -> None:
     elif isinstance(state, (list, tuple)):
         states = list(state)
     else:
-        raise TypeError("Checkpoint contains an invalid CUDA RNG state.")
+        raise TypeError("Checkpoint contains an invalid CUDA RNG state")
 
     normalized = []
     for item in states:
@@ -168,7 +255,13 @@ def restore_cuda_rng_state(state) -> None:
             item = torch.as_tensor(item, dtype=torch.uint8)
         else:
             item = item.detach().to(device="cpu", dtype=torch.uint8)
+        if item.numel() == 0:
+            raise ValueError("Checkpoint contains an empty CUDA RNG state")
         normalized.append(item.contiguous())
+    if len(normalized) != torch.cuda.device_count():
+        raise ValueError(
+            "Checkpoint CUDA RNG state does not match the current CUDA device count"
+        )
     torch.cuda.set_rng_state_all(normalized)
 
 
@@ -195,24 +288,119 @@ def resolve_training_seq_len(model_config: ModelConfig, config: dict) -> int:
             "max_seq_length", model_config.max_position_embeddings - 1
         )
     )
+    if configured < 2:
+        raise ValueError("data.max_seq_length must be at least 2")
     max_input_length = model_config.max_position_embeddings - 1
     if max_input_length < 2:
         raise ValueError("max_position_embeddings must be at least 3")
     return min(configured, max_input_length)
 
 
-def resolve_tokenizer(config: dict, corpus: str, resume_path: str | None, explicit_path: str | None) -> Tokenizer:
+def resolve_tokenizer(
+    config: dict, corpus: str, resume_path: str | None, explicit_path: str | None
+) -> Tokenizer:
     """Load the checkpoint tokenizer on resume; only train one for fresh runs."""
     if explicit_path:
-        return Tokenizer.load(explicit_path)
+        return Tokenizer.load(str(resolve_path(explicit_path)))
 
     if resume_path:
-        checkpoint_tokenizer = Path(resume_path).parent / "tokenizer"
+        checkpoint_tokenizer = resolve_path(resume_path).parent / "tokenizer"
         if (checkpoint_tokenizer / "tokenizer.json").exists():
             print(f"Loading tokenizer from checkpoint: {checkpoint_tokenizer}")
             return Tokenizer.load(str(checkpoint_tokenizer))
 
     return load_or_train_tokenizer(config, corpus)
+
+
+def _assert_resume_compatibility(checkpoint: dict, config: dict, tokenizer: Tokenizer) -> None:
+    if int(checkpoint.get("checkpoint_version", 1)) > CHECKPOINT_FORMAT_VERSION:
+        raise ValueError(
+            "Checkpoint format is newer than this Lapis release; upgrade Lapis first"
+        )
+
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, dict):
+        raise ValueError("Checkpoint is missing its configuration metadata")
+
+    checkpoint_model = checkpoint_config.get("model", {})
+    current_model = config.get("model", {})
+    for key in MODEL_CONFIG_KEYS:
+        if key in checkpoint_model and key in current_model:
+            old = checkpoint_model[key]
+            new = current_model[key]
+            if isinstance(old, float) or isinstance(new, float):
+                equal = math.isclose(float(old), float(new), rel_tol=0.0, abs_tol=1e-12)
+            else:
+                equal = old == new
+            if not equal:
+                raise ValueError(
+                    f"Checkpoint model.{key}={old!r} does not match current value {new!r}"
+                )
+
+    checkpoint_training = checkpoint_config.get("training", {})
+    current_training = config.get("training", {})
+    for key in TRAINING_CONFIG_KEYS:
+        if checkpoint_training.get(key) != current_training.get(key):
+            raise ValueError(
+                f"Checkpoint training.{key}={checkpoint_training.get(key)!r} "
+                f"does not match current value {current_training.get(key)!r}"
+            )
+
+    checkpoint_vocab = checkpoint.get("tokenizer_vocab_size")
+    if checkpoint_vocab is not None and int(checkpoint_vocab) != tokenizer.vocab_size:
+        raise ValueError(
+            f"Checkpoint tokenizer vocabulary size {checkpoint_vocab} does not match "
+            f"loaded tokenizer vocabulary size {tokenizer.vocab_size}"
+        )
+    checkpoint_tokenizer_version = checkpoint.get("tokenizer_version")
+    if checkpoint_tokenizer_version and checkpoint_tokenizer_version != tokenizer.VERSION:
+        raise ValueError(
+            "Checkpoint tokenizer version does not match the installed tokenizer implementation"
+        )
+
+
+def load_checkpoint(path: Path, device: torch.device) -> dict:
+    if not path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+    try:
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
+    except (RuntimeError, OSError, EOFError, ValueError) as exc:
+        raise ValueError(f"Unable to load checkpoint {path}: {exc}") from exc
+    if not isinstance(checkpoint, dict):
+        raise ValueError("Checkpoint root must be a mapping")
+    required = {"model_state_dict", "optimizer_state_dict", "config"}
+    missing = sorted(required - checkpoint.keys())
+    if missing:
+        raise ValueError(f"Checkpoint is missing required fields: {', '.join(missing)}")
+    return checkpoint
+
+
+def _build_dataloader(dataset: Dataset, batch_size: int, seed: int, epoch: int) -> DataLoader:
+    generator = torch.Generator()
+    generator.manual_seed(int(seed) + int(epoch))
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=False,
+        generator=generator,
+    )
+
+
+def _build_model(model_config: ModelConfig, device: torch.device, dtype: torch.dtype) -> LapisModel:
+    model = LapisModel(
+        vocab_size=model_config.vocab_size,
+        hidden_size=model_config.hidden_size,
+        intermediate_size=model_config.intermediate_size,
+        num_layers=model_config.num_layers,
+        num_attention_heads=model_config.num_attention_heads,
+        num_key_value_heads=model_config.num_key_value_heads,
+        max_position_embeddings=model_config.max_position_embeddings,
+        rope_theta=model_config.rope_theta,
+        dropout=model_config.dropout,
+        bias=model_config.bias,
+    )
+    return model.to(device=device, dtype=dtype)
 
 
 def main() -> None:
@@ -227,17 +415,29 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint",
         default="checkpoints/latest.pt",
-        help="Output checkpoint path (defaults to checkpoints/latest.pt)",
+        help="Output checkpoint path (repository-relative by default)",
     )
     args = parser.parse_args()
+
+    if args.epochs <= 0:
+        raise ValueError("--epochs must be positive")
+    if args.seed < 0:
+        raise ValueError("--seed must be non-negative")
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     config = load_yaml(args.config)
-    corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
-    tokenizer = resolve_tokenizer(config, corpus, args.resume, args.tokenizer)
+    validate_runtime_config(config)
+    corpus = (
+        resolve_path(args.data).read_text(encoding="utf-8")
+        if args.data
+        else DEFAULT_CORPUS
+    )
+    resume_path = str(resolve_path(args.resume)) if args.resume else None
+    checkpoint_path = resolve_path(args.checkpoint)
 
+    tokenizer = resolve_tokenizer(config, corpus, resume_path, args.tokenizer)
     config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
     model_config = ModelConfig(config)
     training_config = TrainingConfig(config)
@@ -246,39 +446,24 @@ def main() -> None:
     seq_len = resolve_training_seq_len(model_config, config)
 
     tokens = tokenizer.encode(corpus, add_special_tokens=True)
-    if max(tokens, default=0) >= model_config.vocab_size:
+    if not tokens:
+        raise ValueError("Tokenization produced no training tokens")
+    if max(tokens) >= model_config.vocab_size:
         raise ValueError(
             f"Tokenizer produced id {max(tokens)} but model vocab_size is {model_config.vocab_size}"
         )
 
     dataset = TextDataset(tokens, seq_len=seq_len, pad_id=tokenizer.pad_id)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=training_config.micro_batch_size,
-        shuffle=True,
-        drop_last=False,
-    )
-
-    model = LapisModel(
-        vocab_size=model_config.vocab_size,
-        hidden_size=model_config.hidden_size,
-        intermediate_size=model_config.intermediate_size,
-        num_layers=model_config.num_layers,
-        num_attention_heads=model_config.num_attention_heads,
-        num_key_value_heads=model_config.num_key_value_heads,
-        max_position_embeddings=model_config.max_position_embeddings,
-        rope_theta=model_config.rope_theta,
-        dropout=model_config.dropout,
-        bias=model_config.bias,
-    ).to(device=device, dtype=dtype)
+    model = _build_model(model_config, device, dtype)
 
     breakdown = model.parameter_breakdown()
-    print("Model: Lapis Small")
+    print(f"Model parameters: {breakdown['total']:,}")
     print(f"Tokenizer: {tokenizer}")
     print(f"Device: {device} | dtype: {dtype}")
-    print(f"Parameters: {breakdown['total']:,}")
-    print(f"Vocabulary: {tokenizer.vocab_size:,}")
-    print(f"Tokens: {len(tokens):,} | dataset samples: {len(dataset)} | sequence length: {seq_len}")
+    print(
+        f"Tokens: {len(tokens):,} | dataset samples: {len(dataset)} | "
+        f"sequence length: {seq_len}"
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -289,37 +474,69 @@ def main() -> None:
 
     optimizer_step = 0
     epoch = 0
-    accumulation_count = 0
-    running_loss = 0.0
+    start_batch_index = 0
 
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
-        checkpoint_config = checkpoint.get("config", {})
-        checkpoint_vocab = checkpoint_config.get("model", {}).get("vocab_size")
-        if checkpoint_vocab is not None and int(checkpoint_vocab) != model_config.vocab_size:
-            raise ValueError(
-                f"Checkpoint vocab_size={checkpoint_vocab} does not match current model "
-                f"vocab_size={model_config.vocab_size}. Start a fresh run after changing tokenizer/model size."
-            )
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint.get("optimizer_state_dict", optimizer.state_dict()))
-        if checkpoint.get("scheduler_state_dict"):
-            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    if resume_path:
+        checkpoint = load_checkpoint(Path(resume_path), device)
+        _assert_resume_compatibility(checkpoint, config, tokenizer)
+        try:
+            model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if checkpoint.get("scheduler_state_dict") is not None:
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        except (RuntimeError, KeyError, ValueError) as exc:
+            raise ValueError(f"Checkpoint state is incompatible with the current model: {exc}") from exc
+
         optimizer_step = int(checkpoint.get("step", 0))
         epoch = int(checkpoint.get("epoch", 0))
+        start_batch_index = int(checkpoint.get("batch_index", 0))
+        if optimizer_step < 0 or epoch < 0 or start_batch_index < 0:
+            raise ValueError("Checkpoint contains negative training progress")
+        if optimizer_step > training_config.max_steps:
+            raise ValueError(
+                f"Checkpoint step {optimizer_step} exceeds configured max_steps "
+                f"{training_config.max_steps}"
+            )
         if checkpoint.get("python_rng_state") is not None:
-            random.setstate(checkpoint["python_rng_state"])
+            try:
+                random.setstate(checkpoint["python_rng_state"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Checkpoint contains an invalid Python RNG state") from exc
         restore_torch_rng_state(checkpoint.get("torch_rng_state"))
         restore_cuda_rng_state(checkpoint.get("cuda_rng_state"))
-        print(f"Resumed from optimizer step {optimizer_step}")
+        print(
+            f"Resumed from optimizer step {optimizer_step}, epoch {epoch}, "
+            f"batch {start_batch_index}"
+        )
 
     model.train()
     optimizer.zero_grad(set_to_none=True)
+    running_loss = 0.0
+    accumulation_count = 0
+    epochs_completed = 0
 
-    while optimizer_step < training_config.max_steps and args.epochs > 0:
-        args.epochs -= 1
-        epoch += 1
+    while optimizer_step < training_config.max_steps and epochs_completed < args.epochs:
+        if epoch == 0:
+            epoch = 1
+            batch_start = 0
+        else:
+            batch_start = start_batch_index
+        if batch_start >= len(dataset):
+            epoch += 1
+            batch_start = 0
+
+        dataloader = _build_dataloader(
+            dataset,
+            training_config.micro_batch_size,
+            args.seed,
+            epoch,
+        )
+
+        saw_batch = False
         for batch_index, (input_ids, labels) in enumerate(dataloader):
+            if batch_index < batch_start:
+                continue
+            saw_batch = True
             if optimizer_step >= training_config.max_steps:
                 break
             input_ids = input_ids.to(device)
@@ -333,7 +550,9 @@ def main() -> None:
             accumulation_count += 1
 
             end_of_epoch = batch_index == len(dataloader) - 1
-            should_step = accumulation_count == training_config.gradient_accumulation_steps
+            should_step = (
+                accumulation_count == training_config.gradient_accumulation_steps
+            )
             if should_step or end_of_epoch:
                 if accumulation_count < training_config.gradient_accumulation_steps:
                     correction = training_config.gradient_accumulation_steps / accumulation_count
@@ -341,7 +560,11 @@ def main() -> None:
                         if parameter.grad is not None:
                             parameter.grad.mul_(correction)
 
-                torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.gradient_clip)
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), training_config.gradient_clip
+                )
+                if not torch.isfinite(grad_norm):
+                    raise RuntimeError("Training produced a non-finite gradient norm")
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -356,9 +579,29 @@ def main() -> None:
                     )
                 running_loss = 0.0
                 accumulation_count = 0
+                start_batch_index = batch_index + 1
 
-    checkpoint_path = Path(args.checkpoint)
-    save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, epoch, config, tokenizer)
+                if optimizer_step >= training_config.max_steps:
+                    break
+
+        if not saw_batch:
+            start_batch_index = 0
+        elif start_batch_index >= len(dataloader):
+            epoch += 1
+            start_batch_index = 0
+        epochs_completed += 1
+
+    save_checkpoint(
+        checkpoint_path,
+        model,
+        optimizer,
+        scheduler,
+        optimizer_step,
+        epoch,
+        start_batch_index,
+        config,
+        tokenizer,
+    )
     print(f"Checkpoint saved: {checkpoint_path}")
     print(f"Tokenizer saved: {checkpoint_path.parent / 'tokenizer'}")
 
