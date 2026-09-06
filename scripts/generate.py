@@ -7,17 +7,11 @@ import argparse
 from pathlib import Path
 
 import torch
-import yaml
 
 from lapis.config.base import resolve_device
 from lapis.config.model_config import model_config_kwargs
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-
-
-def load_yaml(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
 
 
 def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> None:
@@ -27,15 +21,6 @@ def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> Non
             "Checkpoint tokenizer_version does not match the active tokenizer: "
             f"{checkpoint_version!r} != {tokenizer.VERSION!r}"
         )
-
-
-def load_model(checkpoint_path: str, device: torch.device) -> LapisModel:
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    config = checkpoint["config"]
-    model = LapisModel(**model_config_kwargs(config)).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-    return model
 
 
 def sample_next_token(logits, temperature, top_k, top_p):
@@ -67,7 +52,7 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
     device = next(model.parameters()).device
     ids = torch.tensor([token_ids], dtype=torch.long, device=device)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(max_new_tokens):
             context = ids[:, -model.max_position_embeddings :]
             logits, _ = model(context)
@@ -82,6 +67,11 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate text with Lapis")
     parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
+    parser.add_argument(
+        "--tokenizer",
+        default=None,
+        help="Tokenizer directory; defaults to <checkpoint-dir>/tokenizer.",
+    )
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--temperature", type=float, default=0.8)
@@ -93,21 +83,26 @@ def main() -> None:
     device = resolve_device(args.device)
     checkpoint = Path(args.checkpoint)
     checkpoint_data = torch.load(checkpoint, map_location=device, weights_only=False)
-    tokenizer_dir = checkpoint.parent / "tokenizer"
+
+    tokenizer_dir = Path(args.tokenizer) if args.tokenizer else checkpoint.parent / "tokenizer"
     tokenizer = Tokenizer.load(str(tokenizer_dir))
     validate_checkpoint_tokenizer(checkpoint_data, tokenizer)
+
     model = LapisModel(**model_config_kwargs(checkpoint_data["config"])).to(device)
     model.load_state_dict(checkpoint_data["model_state_dict"])
     model.eval()
-    print(generate(
-        model,
-        tokenizer,
-        args.prompt,
-        args.max_new_tokens,
-        args.temperature,
-        args.top_k,
-        args.top_p,
-    ))
+
+    print(
+        generate(
+            model,
+            tokenizer,
+            args.prompt,
+            args.max_new_tokens,
+            args.temperature,
+            args.top_k,
+            args.top_p,
+        )
+    )
 
 
 if __name__ == "__main__":
