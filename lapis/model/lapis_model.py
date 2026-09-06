@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -22,6 +24,10 @@ class LapisModel(nn.Module):
             raise ValueError("hidden_size must be divisible by num_attention_heads")
         if num_attention_heads % num_key_value_heads != 0:
             raise ValueError("num_attention_heads must be divisible by num_key_value_heads")
+
+        rope_theta = float(rope_theta)
+        if not math.isfinite(rope_theta) or rope_theta <= 0:
+            raise ValueError("rope_theta must be finite and positive")
 
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
