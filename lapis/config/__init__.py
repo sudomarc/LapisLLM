@@ -1,5 +1,4 @@
-from lapis.config.base import load_config
-from lapis.config.model_config import ModelConfig, get_default_config, get_config
-from lapis.config.training_config import TrainingConfig, DataConfig
+from lapis.config.model_config import ModelConfig, get_config, get_default_config
+from lapis.config.training_config import DataConfig, TrainingConfig
 
-__all__ = ["ModelConfig", "TrainingConfig", "DataConfig", "get_default_config", "get_config"]
+__all__ = ["DataConfig", "ModelConfig", "TrainingConfig", "get_config", "get_default_config"]
