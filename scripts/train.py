@@ -28,12 +28,7 @@ The checkpoint can then be loaded by the generation and chat interfaces.
 
 
 class TextDataset(Dataset):
-    """Fixed-length causal language-modeling examples.
-
-    ``seq_len`` is the number of input positions consumed by the model. The
-    dataset keeps one extra token so the model can perform the causal shift
-    internally and predict the final target in each sample.
-    """
+    """Fixed-length causal language-modeling examples."""
 
     def __init__(self, tokens: list[int], seq_len: int, pad_id: int):
         if seq_len < 2:
@@ -100,13 +95,22 @@ def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
     tokenizer_cfg = config.get("tokenizer", {})
     path = Path(tokenizer_cfg.get("path", "artifacts/tokenizer"))
     tokenizer_file = path / "tokenizer.json"
+    target_vocab = int(tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"]))
+    min_frequency = int(tokenizer_cfg.get("min_frequency", 1))
+
     if tokenizer_file.exists():
-        return Tokenizer.load(str(tokenizer_file))
+        tokenizer = Tokenizer.load(str(tokenizer_file))
+        if tokenizer.vocab_size == target_vocab:
+            return tokenizer
+        print(
+            f"Tokenizer vocab mismatch ({tokenizer.vocab_size} != {target_vocab}); "
+            "retraining tokenizer from the current corpus."
+        )
 
     tokenizer = Tokenizer.train_from_iterator(
         [corpus],
-        vocab_size=int(tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"])),
-        min_frequency=int(tokenizer_cfg.get("min_frequency", 1)),
+        vocab_size=target_vocab,
+        min_frequency=min_frequency,
     )
     tokenizer.save(str(path))
     return tokenizer
@@ -150,7 +154,6 @@ def build_scheduler(optimizer, training_config):
 
 
 def resolve_training_seq_len(model_config: ModelConfig, config: dict) -> int:
-    """Resolve a dataset sequence length that leaves room for the target token."""
     configured = int(
         config.get("data", {}).get(
             "max_seq_length", model_config.max_position_embeddings - 1
@@ -199,7 +202,12 @@ def main() -> None:
         )
 
     dataset = TextDataset(tokens, seq_len=seq_len, pad_id=tokenizer.pad_id)
-    dataloader = DataLoader(dataset, batch_size=training_config.micro_batch_size, shuffle=True, drop_last=False)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=training_config.micro_batch_size,
+        shuffle=True,
+        drop_last=False,
+    )
 
     model = LapisModel(
         vocab_size=model_config.vocab_size,
@@ -215,14 +223,18 @@ def main() -> None:
     ).to(device=device, dtype=dtype)
 
     breakdown = model.parameter_breakdown()
-    print("Model: Lapis Local Dev")
+    print("Model: Lapis Small")
     print(f"Tokenizer: {tokenizer}")
     print(f"Device: {device} | dtype: {dtype}")
     print(f"Parameters: {breakdown['total']:,}")
     print(f"Vocabulary: {tokenizer.vocab_size:,}")
-    print(f"Dataset samples: {len(dataset)} | sequence length: {seq_len}")
+    print(f"Tokens: {len(tokens):,} | dataset samples: {len(dataset)} | sequence length: {seq_len}")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=training_config.learning_rate, weight_decay=training_config.weight_decay)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=training_config.learning_rate,
+        weight_decay=training_config.weight_decay,
+    )
     scheduler = build_scheduler(optimizer, training_config)
 
     optimizer_step = 0
@@ -232,6 +244,13 @@ def main() -> None:
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        checkpoint_config = checkpoint.get("config", {})
+        checkpoint_vocab = checkpoint_config.get("model", {}).get("vocab_size")
+        if checkpoint_vocab is not None and int(checkpoint_vocab) != model_config.vocab_size:
+            raise ValueError(
+                f"Checkpoint vocab_size={checkpoint_vocab} does not match current model "
+                f"vocab_size={model_config.vocab_size}. Start a fresh run after changing tokenizer/model size."
+            )
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint.get("optimizer_state_dict", optimizer.state_dict()))
         if checkpoint.get("scheduler_state_dict"):
