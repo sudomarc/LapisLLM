@@ -1,0 +1,11 @@
+{
+  "name": "lapisllm-website",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "lint": "node build.mjs --lint"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

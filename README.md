@@ -2,25 +2,23 @@
 
 **Lapis is a from-scratch decoder-only Transformer language model and training stack written in Python/PyTorch.**
 
-The project is designed to make the mechanics of an LLM inspectable: tokenizer, data pipeline, Transformer architecture, optimization, checkpointing, evaluation, and inference are developed as explicit components rather than hidden behind a large framework.
+The project exists to make LLM engineering inspectable: tokenizer, data pipeline, Transformer architecture, optimization, checkpointing, evaluation, inference, and serving are explicit parts of the repository.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main&label=tests)](https://github.com/sudomarc/LapisLLM/actions/workflows/tests.yml)
+[![Pages](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/static.yml?branch=main&label=website)](https://github.com/sudomarc/LapisLLM/actions/workflows/static.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Project status:** `Lapis 0.1.1 — Correctness`  
-> The current milestone focuses on making the training core correct, testable, and reproducible. Lapis is **not yet a competitive pretrained foundation model**.
+> **Current status — Lapis 0.1.1: Correctness.** The project is experimental and is not yet a competitive pretrained foundation model. Benchmark and capability claims are intentionally withheld until reproducible validation exists.
 
----
+## Why Lapis
 
-## What is Lapis?
+Lapis takes a build-first approach to language models. The goal is not to hide the implementation behind a hosted endpoint or a large training framework; it is to make the mechanics understandable enough to debug, reproduce, and extend.
 
-LapisLLM is an attempt to build an LLM stack from first principles while keeping the implementation small enough to study and modify.
+Current model components include:
 
-The core model is a causal Transformer with:
-
-- decoder-only autoregressive training
+- decoder-only causal language modeling
 - RMSNorm
 - Rotary Position Embeddings (RoPE)
 - Grouped Query Attention (GQA)
@@ -29,359 +27,110 @@ The core model is a causal Transformer with:
 - ByteLevel BPE tokenization
 - PyTorch training and checkpointing
 
-The goal is not to hide complexity. The goal is to expose it.
+## Models
 
-## Current release
+The development model is **Lapis Tiny**. Its current development configuration uses a vocabulary size of 256, hidden size 128, two Transformer layers, four query heads, two key/value heads, and a 128-token context. The exact instantiated parameter count is reported by the training code rather than hard-coded here.
 
-### Lapis 0.1.1 — Correctness
+Larger configurations such as Lapis Small, Lapis 1B, Lapis 3B, and Lapis 7B are roadmap targets, not released or benchmarked models.
 
-This release concentrates on the parts that must be right before scaling the model.
+## Quickstart
 
-**Included**
-
-- corrected causal target alignment
-- padding-aware loss masking
-- linear warmup followed by cosine decay
-- optimizer, scheduler, model, and RNG checkpoint state
-- tokenizer artifacts stored with checkpoints
-- correct propagation of the model `bias` configuration
-- tests for causality, GQA shapes, RoPE behavior, loss masking, tokenizer round-trips, and dataset alignment
-- reproducible local training configuration
-
-**Next milestone: 0.1.2 — Validation**
-
-- validation loss and perplexity
-- tiny-dataset overfitting experiment
-- deterministic checkpoint round-trip tests
-- generation regression tests
-- stronger configuration validation
-- documented training experiments
-
-No benchmark or capability claims are made until those experiments exist.
-
----
-
-## Architecture
-
-```text
-Text
- │
- ▼
-ByteLevel BPE tokenizer
- │
- ▼
-Token IDs
- │
- ▼
-Token embeddings
- │
- ▼
-┌──────────────────────────────┐
-│ Transformer block × N        │
-│                              │
-│ RMSNorm                      │
-│   └─ GQA + RoPE              │
-│ Residual                     │
-│                              │
-│ RMSNorm                      │
-│   └─ SwiGLU MLP              │
-│ Residual                     │
-└──────────────────────────────┘
- │
- ▼
-RMSNorm
- │
- ▼
-LM head
- │
- ▼
-Next-token logits
-```
-
-### Attention
-
-Lapis uses **Grouped Query Attention**: multiple query heads share key/value heads. The number of query heads must be divisible by the number of key/value heads.
-
-### Position encoding
-
-The model uses **RoPE** rather than learned absolute position embeddings. Rotary frequencies are precomputed up to `max_position_embeddings`.
-
-### Language-model objective
-
-For an input sequence:
-
-```text
-x₀ x₁ x₂ x₃ ... xₙ
-```
-
-the model predicts:
-
-```text
-    x₁ x₂ x₃ ... xₙ
-```
-
-The dataset keeps the complete `seq_len + 1` window; the model performs the causal shift exactly once. Padding targets are represented by `-100` and ignored by cross-entropy.
-
----
-
-## Model configurations
-
-The repository currently provides several YAML configurations. The important development configuration is `configs/tiny.yaml`:
-
-| Parameter | Tiny |
-|---|---:|
-| Vocabulary | 256 |
-| Hidden size | 128 |
-| Layers | 2 |
-| Attention heads | 4 |
-| KV heads | 2 |
-| FFN size | 256 |
-| Context | 128 tokens |
-| Dropout | 0.0 |
-| Optimizer | AdamW |
-| Learning rate | 3e-4 |
-| Warmup | 10 steps |
-| Training budget | 200 steps |
-
-The exact instantiated parameter count is reported by the training script rather than being hard-coded in the documentation.
-
----
-
-## Quick start
-
-### Requirements
-
-- Python 3.11+
-- PyTorch 2.0+
-- a few GB of disk space for a development environment
-- CPU is sufficient for the tiny development configuration; CUDA can be used when available
-
-### Install
+Requirements: Python 3.11+ and a development installation of PyTorch.
 
 ```bash
 git clone https://github.com/sudomarc/LapisLLM.git
 cd LapisLLM
-
 python -m venv .venv
 source .venv/bin/activate
-
-# Windows PowerShell:
-# .venv\Scripts\Activate.ps1
-
 pip install -e .
-```
-
-### Run the test suite
-
-```bash
 python -m pytest
-```
-
-### Train the tiny model
-
-```bash
 python scripts/train.py --config configs/tiny.yaml
 ```
 
-The smoke training path is self-contained and uses the built-in development corpus when no `--data` file is supplied.
+The tiny path is designed for local development and can run on CPU. Larger training is a future scaling step.
 
-### Train on your own text
+## Evaluation philosophy
 
-```bash
-python scripts/train.py \
-  --config configs/tiny.yaml \
-  --data ./data/train.txt
-```
+Lapis uses evidence gates:
 
-### Resume a checkpoint
+1. **Correctness** — shapes, causality, masking, tokenizer behavior, gradients, and checkpoint state.
+2. **Learning** — tiny-dataset overfitting.
+3. **Generalization** — held-out loss and perplexity.
+4. **Generation** — deterministic and sampling regression tests.
+5. **Scaling** — larger configurations only after the earlier stages are reproducible.
 
-```bash
-python scripts/train.py \
-  --config configs/tiny.yaml \
-  --resume checkpoints/latest.pt
-```
+No benchmark result is published in this repository until the underlying experiment is reproducible.
 
----
+## Skills
+
+The website includes a Lapis-native skills ecosystem for modular developer workflows. Skills are versioned packages with a normative `SKILL.md`, explicit inputs/outputs, workflow stages, limitations, and safety boundaries.
+
+Current skill catalog:
+
+- Security Audit
+- Pentest Planner
+- Reverse Engineer
+- PR Engineer
+- Docs Writer
+- Benchmark
+- Dataset Cleaner
+- Prompt Optimizer
+- Web Tester
+- Release Manager
+
+These packages are an experimental specification layer; they do not imply autonomous access to external systems.
 
 ## Repository layout
 
 ```text
 LapisLLM/
-├── lapis/
-│   ├── config/          # Model, training, and data configuration
-│   ├── data/            # Cleaning, filtering, packing, manifests
-│   ├── model/           # Transformer implementation
-│   └── tokenizer/       # ByteLevel BPE tokenizer
-├── scripts/
-│   ├── train.py         # Training entry point
-│   ├── train_tokenizer.py
-│   ├── prepare_data.py
-│   ├── evaluate.py
-│   ├── generate.py
-│   ├── chat.py
-│   └── serve.py
-├── configs/             # Reproducible YAML experiments
-├── tests/               # Unit and correctness tests
-├── docs/                # Technical documentation
-├── .github/workflows/   # CI and GitHub Pages workflows
+├── lapis/                 # model, tokenizer, data, config, training helpers
+├── scripts/               # train, evaluate, generate, chat, serve
+├── configs/               # reproducible YAML experiments
+├── tests/                 # correctness and integration tests
+├── docs/                  # technical project documentation
+├── website/               # static developer platform / GitHub Pages site
 ├── CHANGELOG.md
 ├── AGENTS.md
+├── LICENSE
 └── README.md
 ```
 
----
-
 ## Reproducibility
 
-Lapis treats reproducibility as a training-system requirement rather than a README claim.
-
-Checkpoints currently preserve:
-
-- model weights
-- optimizer state
-- scheduler state
-- training step
-- epoch
-- model/training configuration
-- tokenizer version and tokenizer files
-- Python RNG state
-- PyTorch RNG state
-- CUDA RNG state when CUDA is available
-
-Training also accepts an explicit seed through `--seed`.
-
-Exact mid-epoch replay is still being hardened; the next validation milestone will address data-loader/sampler state explicitly.
-
----
-
-## Data
-
-The data pipeline contains separate components for:
-
-- source ingestion
-- text cleaning
-- quality filtering
-- duplicate removal
-- sequence packing
-- deterministic manifests
-
-The current filtering and deduplication logic is intended for development and experimentation. It should **not** be described as a production-scale Common Crawl pipeline yet.
-
----
-
-## Evaluation philosophy
-
-A decreasing training loss is not enough to claim that an LLM works.
-
-Lapis will therefore validate progress in stages:
-
-1. **Correctness** — tensor shapes, causality, masking, tokenizer behavior, gradients.
-2. **Learning** — the tiny model must overfit a deliberately small dataset.
-3. **Generalization** — validation loss and perplexity on held-out text.
-4. **Generation** — deterministic and sampling-based generation regression tests.
-5. **Scaling** — larger configurations only after the previous stages are reproducible.
-
-Until these stages are complete, Lapis makes no claims about reasoning, coding ability, factual knowledge, or benchmark performance.
-
----
-
-## Roadmap
-
-### 0.1 — Foundation
-
-- [x] Transformer architecture
-- [x] ByteLevel BPE tokenizer
-- [x] causal language-model loss
-- [x] GQA + RoPE + SwiGLU
-- [x] checkpointing
-- [x] correctness-focused tests
-
-### 0.1.2 — Validation
-
-- [ ] validation split
-- [ ] perplexity reporting
-- [ ] tiny-overfit experiment
-- [ ] deterministic checkpoint round-trip
-- [ ] generation regression suite
-- [ ] stronger config validation
-
-### 0.2 — Small model
-
-- [ ] larger validated configuration
-- [ ] mixed precision
-- [ ] efficient KV cache
-- [ ] gradient checkpointing
-- [ ] dataset/checkpoint sharding
-
-### Later
-
-- [ ] distributed training
-- [ ] larger-scale pretraining
-- [ ] broader evaluation suite
-- [ ] model export and interoperability
-
----
-
-## Design principles
-
-### Small enough to understand
-
-Lapis intentionally avoids hiding the model behind a high-level training framework during the early milestones.
-
-### Correct before fast
-
-Optimization and scaling come after the training objective, masking, checkpointing, and tests are trustworthy.
-
-### Configuration over hard-coded experiments
-
-Model and training dimensions live in YAML configurations so experiments can be compared and reproduced.
-
-### Evidence over claims
-
-Benchmarks, parameter counts, and capability statements should come from reproducible experiments, not estimates in documentation.
-
----
+Checkpoints preserve model, optimizer, scheduler, training/configuration state, tokenizer references, and RNG state. Training accepts an explicit seed. Exact mid-epoch data-loader replay is still being hardened.
 
 ## Known limitations
 
-Lapis is an experimental research/learning project. In particular:
-
-- the current tiny configuration is not intended to produce high-quality general-purpose text
-- the built-in corpus is only a smoke-training corpus
-- data filtering is not yet production-grade
-- exact mid-epoch resume is not fully deterministic
-- large-scale distributed training is not implemented
-- model quality has not yet been established through a comprehensive benchmark suite
-
-These limitations are intentional parts of the current development stage, not hidden behind a production-style README.
-
----
+Lapis is an experimental research/learning project. Large-scale distributed training, mixed-precision training, efficient KV-cache generation, comprehensive benchmark evaluation, production-grade web-scale data processing, and exact mid-epoch replay are not yet complete.
 
 ## Contributing
 
-Contributions should preserve the project's development discipline:
+Keep changes focused, add tests for behavioral changes, run the test suite and Ruff, and document architecture or behavior changes.
 
-1. keep changes focused
-2. add or update tests for behavioral changes
-3. run `python -m pytest`
-4. run `ruff check .`
-5. document architecture or behavior changes
+```bash
+python -m pytest
+ruff check .
+```
 
-See [`AGENTS.md`](AGENTS.md) for repository-specific engineering guidance.
+See [`AGENTS.md`](AGENTS.md) for repository engineering rules.
 
----
+## Website
+
+The `website/` directory is a static developer platform for Models, Skills, Docs, Research, Roadmap, Changelog, and About. It is deployed to GitHub Pages and does not require a permanent server.
+
+Local website checks:
+
+```bash
+cd website
+npm install
+npm run lint
+npm run build
+```
 
 ## License
 
 LapisLLM is released under the MIT License. See [`LICENSE`](LICENSE).
-
----
-
-## Acknowledgements
-
-Lapis is informed by the open-source LLM ecosystem, including the design and documentation practices of projects such as Meta Llama, OpenAI's open-weight work, Hugging Face Transformers, and nanoGPT.
-
-The project does not copy model weights or training data from those projects.
 
 ## Citation
 
@@ -393,8 +142,3 @@ The project does not copy model weights or training data from those projects.
   url = {https://github.com/sudomarc/LapisLLM}
 }
 ```
-
----
-
-**Lapis 0.1.1 — Correctness**  
-Build the foundation first. Scale it second.
