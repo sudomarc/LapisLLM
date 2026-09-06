@@ -33,6 +33,6 @@ def test_local_tokenizer_round_trip():
     tokenizer = Tokenizer()
     text = "Lapis local test: 123!\n"
     ids = tokenizer.encode(text)
+    assert tokenizer.vocab_size <= 128
     assert max(ids) < 128
     assert tokenizer.decode(ids) == text
-    assert Tokenizer.load_from_dict if False else True
