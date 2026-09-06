@@ -8,6 +8,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,18 +17,40 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -e .
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && pip install -e ".[test]"
 
       - name: Run tests
-        run: python -m pytest
+        run: python -m pytest -q
+
+      - name: Run Ruff
+        run: ruff check .
+
+      - name: Build package
+        run: python -m pip install build && python -m build
+
+      - name: CLI help smoke tests
+        run: |
+          python scripts/train.py --help
+          python scripts/evaluate.py --help
+          python scripts/generate.py --help
+          python scripts/chat.py --help
+          python scripts/serve.py --help
+          python scripts/train_tokenizer.py --help
 
       - name: Run tiny training smoke test
-        run: python scripts/train.py --config configs/tiny.yaml --epochs 1 --device cpu
+        env:
+          CHECKPOINT: ${{ runner.temp }}/lapis-checkpoint.pt
+        run: python scripts/train.py --config configs/tiny.yaml --epochs 1 --device cpu --checkpoint "$CHECKPOINT"
 
       - name: Run evaluation smoke test
-        run: python scripts/evaluate.py --checkpoint checkpoints/latest.pt --device cpu
+        env:
+          CHECKPOINT: ${{ runner.temp }}/lapis-checkpoint.pt
+        run: python scripts/evaluate.py --checkpoint "$CHECKPOINT" --device cpu
 
-      - name: Ruff check
-        run: ruff check .
+      - name: Run deterministic generation smoke test
+        env:
+          CHECKPOINT: ${{ runner.temp }}/lapis-checkpoint.pt
+        run: python scripts/generate.py --checkpoint "$CHECKPOINT" --prompt "LAPIS" --max-new-tokens 4 --temperature 0 --top-k 1 --top-p 1 --device cpu
