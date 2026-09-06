@@ -1,7 +1,7 @@
 {
   "project": "LapisLLM",
   "collector": "scripts/fetch_training_data.py",
-  "generated_at_utc": "2026-09-06T03:56:14Z",
+  "generated_at_utc": "2026-09-06T04:16:49Z",
   "settings": {
     "ascii_only": false,
     "keep_markdown": false,
@@ -26,8 +26,8 @@
       "representation learning",
       "word embedding"
     ],
-    "articles_requested": 34,
-    "articles_collected": 34
+    "articles_requested": 35,
+    "articles_collected": 35
   },
   "github": {
     "repositories": [
@@ -66,17 +66,17 @@
   },
   "outputs": {
     "wikipedia.txt": {
-      "bytes": 853875,
-      "records": 34
+      "bytes": 945949,
+      "records": 35
     },
     "github.txt": {
       "bytes": 590934,
       "records": 47
     },
     "combined.txt": {
-      "bytes": 1445478,
-      "records": 81,
-      "approx_tokens": 190449
+      "bytes": 1537562,
+      "records": 82,
+      "approx_tokens": 203142
     }
   }
 }
