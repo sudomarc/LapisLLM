@@ -9,6 +9,8 @@ from pathlib import Path
 import torch
 import yaml
 
+from lapis.config.base import resolve_device
+from lapis.config.model_config import model_config_kwargs
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
 
@@ -18,11 +20,19 @@ def load_yaml(path: str) -> dict:
         return yaml.safe_load(handle)
 
 
+def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> None:
+    checkpoint_version = checkpoint.get("tokenizer_version")
+    if checkpoint_version is not None and checkpoint_version != tokenizer.VERSION:
+        raise ValueError(
+            "Checkpoint tokenizer_version does not match the active tokenizer: "
+            f"{checkpoint_version!r} != {tokenizer.VERSION!r}"
+        )
+
+
 def load_model(checkpoint_path: str, device: torch.device) -> LapisModel:
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint["config"]
-    model_cfg = config["model"]
-    model = LapisModel(**model_cfg).to(device)
+    model = LapisModel(**model_config_kwargs(config)).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
@@ -80,11 +90,15 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else "cpu" if args.device == "auto" else args.device)
+    device = resolve_device(args.device)
     checkpoint = Path(args.checkpoint)
+    checkpoint_data = torch.load(checkpoint, map_location=device, weights_only=False)
     tokenizer_dir = checkpoint.parent / "tokenizer"
     tokenizer = Tokenizer.load(str(tokenizer_dir))
-    model = load_model(str(checkpoint), device)
+    validate_checkpoint_tokenizer(checkpoint_data, tokenizer)
+    model = LapisModel(**model_config_kwargs(checkpoint_data["config"])).to(device)
+    model.load_state_dict(checkpoint_data["model_state_dict"])
+    model.eval()
     print(generate(
         model,
         tokenizer,
