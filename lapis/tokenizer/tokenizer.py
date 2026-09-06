@@ -74,6 +74,10 @@ class Tokenizer:
         vocab_size: int = 512,
         min_frequency: int = 1,
     ) -> "Tokenizer":
+        if vocab_size < len(cls.SPECIAL_TOKENS):
+            raise ValueError("vocab_size must be at least the number of special tokens")
+        if min_frequency < 1:
+            raise ValueError("min_frequency must be at least 1")
         tokenizer = cls.create_untrained()
         trainer = BpeTrainer(
             vocab_size=int(vocab_size),
@@ -93,6 +97,12 @@ class Tokenizer:
         vocab_size: int = 32000,
         min_frequency: int = 2,
     ) -> "Tokenizer":
+        if not files:
+            raise ValueError("At least one tokenizer training file is required")
+        if vocab_size < len(cls.SPECIAL_TOKENS):
+            raise ValueError("vocab_size must be at least the number of special tokens")
+        if min_frequency < 1:
+            raise ValueError("min_frequency must be at least 1")
         tokenizer = cls.create_untrained()
         trainer = BpeTrainer(
             vocab_size=int(vocab_size),
@@ -106,22 +116,41 @@ class Tokenizer:
         return cls(tokenizer._tokenizer)
 
     @classmethod
+    def from_json(cls, serialized: str) -> "Tokenizer":
+        cls._require_dependency()
+        if not serialized:
+            raise ValueError("Serialized tokenizer is empty")
+        try:
+            backend = HFTokenizer.from_str(serialized)
+        except Exception as exc:
+            raise ValueError("Could not deserialize the embedded tokenizer") from exc
+        return cls(backend)
+
+    def to_json(self) -> str:
+        """Return the exact backend tokenizer definition for checkpoint embedding."""
+        return self._tokenizer.to_str()
+
+    @classmethod
     def load(cls, path: str) -> "Tokenizer":
         cls._require_dependency()
         tokenizer_path = Path(path)
         if tokenizer_path.is_dir():
             tokenizer_path = tokenizer_path / "tokenizer.json"
+        if not tokenizer_path.is_file():
+            raise FileNotFoundError(f"Tokenizer file not found: {tokenizer_path}")
         backend = HFTokenizer.from_file(str(tokenizer_path))
         return cls(backend)
 
     def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
         encoding = self._tokenizer.encode(text, add_special_tokens=False)
         ids = list(encoding.ids)
         if add_special_tokens:
             ids = [self.bos_id, *ids, self.eos_id]
         return ids
 
-    def batch_encode(self, texts, add_special_tokens: bool = True) -> list[list[int]]:
+    def batch_encode(self, texts: Iterable[str], add_special_tokens: bool = True) -> list[list[int]]:
         return [self.encode(text, add_special_tokens=add_special_tokens) for text in texts]
 
     def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
