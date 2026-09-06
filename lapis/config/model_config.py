@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from lapis.config.base import load_config
 
 
@@ -14,6 +16,8 @@ def get_config(path):
 
 
 class ModelConfig:
+    """Validated model architecture configuration."""
+
     def __init__(self, config=None):
         config = get_default_config() if config is None else config
         if not isinstance(config, dict) or not isinstance(config.get("model"), dict):
@@ -55,14 +59,16 @@ class ModelConfig:
             raise ValueError("num_key_value_heads must be positive")
         if self.max_position_embeddings < 2:
             raise ValueError("max_position_embeddings must be at least 2")
-        if self.rope_theta <= 0:
-            raise ValueError("rope_theta must be greater than 0")
-        if not 0.0 <= self.dropout < 1.0:
-            raise ValueError("dropout must be in the range [0, 1)")
+        if not math.isfinite(self.rope_theta) or self.rope_theta <= 0:
+            raise ValueError("rope_theta must be a finite value greater than 0")
+        if not math.isfinite(self.dropout) or not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must be a finite value in the range [0, 1)")
         if self.hidden_size % self.num_attention_heads:
             raise ValueError("hidden_size must be divisible by num_attention_heads")
         if self.num_attention_heads % self.num_key_value_heads:
             raise ValueError("num_attention_heads must be divisible by num_key_value_heads")
+        if (self.hidden_size // self.num_attention_heads) % 2:
+            raise ValueError("attention head dimension must be even for RoPE")
 
     def count_parameters(self):
         """Estimate parameter counts from the architecture configuration."""
@@ -86,12 +92,9 @@ class ModelConfig:
         embedding = self.vocab_size * h
         final_norm = h
         lm_head = h * self.vocab_size + (self.vocab_size if self.bias else 0)
-        total = (
-            embedding
-            + self.num_layers * (attention_per_layer + mlp_per_layer + norm_per_layer)
-            + final_norm
-            + lm_head
-        )
+        total = embedding + self.num_layers * (
+            attention_per_layer + mlp_per_layer + norm_per_layer
+        ) + final_norm + lm_head
         return {
             "total": total,
             "trainable": total,
