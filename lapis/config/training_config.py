@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from lapis.config.base import load_config
 
 
@@ -19,6 +21,13 @@ class TrainingConfig:
         self.micro_batch_size = int(training["micro_batch_size"])
         self.gradient_accumulation_steps = int(training["gradient_accumulation_steps"])
         self.gradient_clip = float(training["gradient_clip"])
+
+        if not math.isfinite(self.learning_rate) or self.learning_rate <= 0:
+            raise ValueError("learning_rate must be finite and positive")
+        if not math.isfinite(self.weight_decay) or self.weight_decay < 0:
+            raise ValueError("weight_decay must be finite and non-negative")
+        if not math.isfinite(self.gradient_clip) or self.gradient_clip <= 0:
+            raise ValueError("gradient_clip must be finite and positive")
 
     def get_effective_batch_size(self):
         return self.micro_batch_size * self.gradient_accumulation_steps
