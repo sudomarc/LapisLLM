@@ -54,6 +54,8 @@ class TextDataset(Dataset):
         for start in range(0, len(tokens), seq_len):
             chunk = list(tokens[start : start + needed])
             real_length = len(chunk)
+            if real_length < 2:
+                break
             if real_length < needed:
                 chunk.extend([pad_id] * (needed - real_length))
             sample = torch.tensor(chunk, dtype=torch.long)
@@ -62,7 +64,7 @@ class TextDataset(Dataset):
                 labels[real_length:] = -100
             self.samples.append((sample, labels))
         if not self.samples:
-            raise ValueError("training data produced no samples")
+            raise ValueError("training data must contain at least two tokens")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -167,8 +169,7 @@ def save_checkpoint(path, model, optimizer, scheduler, step, epoch, batch_index,
     """Write a complete checkpoint atomically after persisting its tokenizer."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tokenizer_dir = path.parent / "tokenizer"
-    tokenizer.save(str(tokenizer_dir))
+    tokenizer.save(str(path.parent / "tokenizer"))
     payload = _checkpoint_payload(model, optimizer, scheduler, step, epoch, batch_index, config, tokenizer)
     temp_path = path.with_name(f".{path.name}.tmp")
     try:
@@ -219,11 +220,13 @@ def build_scheduler(optimizer, training_config):
     total_steps = max(1, int(training_config.max_steps))
     if warmup_steps <= 0:
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+
     def lr_lambda(step: int) -> float:
         if step < warmup_steps:
             return max(1e-12, float(step + 1) / warmup_steps)
         progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
         return 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
+
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
