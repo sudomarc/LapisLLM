@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Collect a bounded training corpus from public/open Hugging Face datasets.
+"""Collect a bounded, diverse training corpus from public/open datasets.
 
-This complements fetch_training_data.py. It is intentionally bounded so a Colab
-run does not accidentally download terabytes of data. The collector uses the
-Datasets streaming API and records provenance in manifest.json.
+The collector is intentionally bounded so Colab runs do not accidentally
+consume huge datasets. Hugging Face streaming is used throughout and every
+source is recorded in manifest.json for provenance.
 
 Install once:
     pip install datasets
 
-Examples:
-    python scripts/fetch_open_corpus.py --sources fineweb_edu wikipedia books code
-    python scripts/fetch_open_corpus.py --sources fineweb_edu c4 --max-chars 50000000
+Example:
+    python scripts/fetch_open_corpus.py --max-chars 50000000
 """
 
 from __future__ import annotations
@@ -29,26 +28,31 @@ from typing import Any
 
 LOGGER = logging.getLogger("lapis.fetch_open_corpus")
 
-# Dataset identifiers are public Hugging Face datasets. Some have multiple
-# configurations/splits; these defaults are deliberately conservative.
+# Broad mixture: general web, education, knowledge, science, mathematics,
+# code, and assistant conversations/reasoning. All are streamed and bounded.
 SOURCES: dict[str, dict[str, Any]] = {
     "fineweb": {"dataset": "HuggingFaceFW/fineweb", "config": "sample-10BT", "split": "train", "field": "text"},
     "fineweb_edu": {"dataset": "HuggingFaceFW/fineweb-edu", "config": "sample-10BT", "split": "train", "field": "text"},
     "c4": {"dataset": "allenai/c4", "config": "en", "split": "train", "field": "text"},
-    "cosmopedia": {"dataset": "HuggingFaceTB/cosmopedia", "config": "web_samples_v1", "split": "train", "field": "text"},
     "wikipedia": {"dataset": "wikimedia/wikipedia", "config": "20231101.en", "split": "train", "field": "text"},
-    "books": {"dataset": "HuggingFaceTB/cosmopedia", "config": "stories", "split": "train", "field": "text"},
+    "s2orc_arxiv": {"dataset": "AlgorithmicResearchGroup/s2orc_arxiv", "config": None, "split": "train", "field": "text"},
+    "cosmopedia": {"dataset": "HuggingFaceTB/cosmopedia", "config": "web_samples_v1", "split": "train", "field": "text"},
+    "openr1_math": {"dataset": "open-r1/OpenR1-Math-220k", "config": "default", "split": "train", "field": "messages"},
     "math": {"dataset": "open-web-math/open-web-math", "config": "default", "split": "train", "field": "text"},
+    "oasst1": {"dataset": "OpenAssistant/oasst1", "config": None, "split": "train", "field": "text"},
     "code": {"dataset": "bigcode/the-stack-smol", "config": "data", "split": "train", "field": "content"},
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect a bounded open Lapis training corpus")
-    parser.add_argument("--sources", nargs="+", choices=sorted(SOURCES), default=["fineweb_edu", "wikipedia", "cosmopedia", "math", "code"])
+    parser.add_argument("--sources", nargs="+", choices=sorted(SOURCES), default=[
+        "fineweb_edu", "c4", "wikipedia", "s2orc_arxiv", "cosmopedia",
+        "openr1_math", "oasst1", "math", "code",
+    ])
     parser.add_argument("--output-dir", default="training_data/open")
     parser.add_argument("--max-chars", type=int, default=50_000_000, help="Global character budget")
-    parser.add_argument("--max-chars-per-source", type=int, default=12_000_000)
+    parser.add_argument("--max-chars-per-source", type=int, default=6_000_000)
     parser.add_argument("--max-examples", type=int, default=100_000)
     parser.add_argument("--max-examples-per-source", type=int, default=25_000)
     parser.add_argument("--min-chars", type=int, default=80)
@@ -74,12 +78,13 @@ def load_streaming(spec: dict[str, Any]):
 
     kwargs: dict[str, Any] = {
         "path": spec["dataset"],
-        "name": spec.get("config"),
         "split": spec.get("split", "train"),
         "streaming": True,
     }
-    if kwargs["name"] in {None, "default"}:
-        kwargs.pop("name", None)
+    if spec.get("config") not in {None, "default"}:
+        kwargs["name"] = spec["config"]
+    elif spec.get("config") == "default":
+        kwargs["name"] = "default"
     return load_dataset(**kwargs)
 
 
@@ -87,12 +92,29 @@ def extract_text(example: dict[str, Any], field: str) -> str | None:
     value = example.get(field)
     if isinstance(value, str):
         return value
-    # Common instruction/code dataset shapes.
-    for key in ("text", "content", "body", "completion", "response"):
+
+    # OpenR1-style message arrays and other conversational structures.
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                role = item.get("role")
+                content = item.get("content") or item.get("text")
+                if isinstance(content, str):
+                    prefix = f"{role}: " if isinstance(role, str) else ""
+                    parts.append(prefix + content)
+            elif isinstance(item, str):
+                parts.append(item)
+        if parts:
+            return "\n\n".join(parts)
+
+    # Common instruction/reasoning dataset shapes.
+    parts: list[str] = []
+    for key in ("problem", "question", "prompt", "solution", "answer", "completion", "response", "content", "body", "text"):
         value = example.get(key)
-        if isinstance(value, str):
-            return value
-    return None
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+    return "\n\n".join(parts) if parts else None
 
 
 def write_source(path: Path, source_name: str, records: list[str]) -> int:
@@ -167,10 +189,6 @@ def main() -> int:
         except Exception as exc:
             LOGGER.warning("Stream interrupted for %s after %d examples: %s", name, examples, exc)
         finally:
-            # Hugging Face's streaming parquet backend has had versions where
-            # background HTTP workers keep the interpreter alive after the
-            # IterableDataset is no longer used. Drop references promptly so
-            # normal garbage collection can close those resources.
             del stream
             gc.collect()
 
@@ -201,10 +219,6 @@ def main() -> int:
 if __name__ == "__main__":
     exit_code = main()
     if exit_code == 0:
-        # Some Hugging Face streaming/parquet releases leave a background HTTP
-        # worker alive after iteration. All corpus files are closed above, so
-        # once collection is complete it is safe to terminate this short-lived
-        # collector process explicitly instead of hanging a Colab cell.
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)
