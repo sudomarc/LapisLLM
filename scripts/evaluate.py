@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-from scripts.train import DEFAULT_CORPUS, TextDataset
+from scripts.train import DEFAULT_CORPUS, TextDataset, resolve_training_seq_len
 
 
 def main() -> None:
@@ -41,14 +41,12 @@ def main() -> None:
         if args.data
         else DEFAULT_CORPUS
     )
-    seq_len = min(
-        model.max_position_embeddings,
-        int(
-            config.get("data", {}).get(
-                "max_seq_length", model.max_position_embeddings
-            )
-        ),
-    )
+    model_cfg = type(
+        "ModelConfigView",
+        (),
+        {"max_position_embeddings": model.max_position_embeddings},
+    )()
+    seq_len = resolve_training_seq_len(model_cfg, config)
     dataset = TextDataset(tokenizer.encode(corpus), seq_len, tokenizer.pad_id)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
