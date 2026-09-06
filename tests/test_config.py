@@ -1,4 +1,4 @@
-from lapis.config import get_default_config, ModelConfig, TrainingConfig, DataConfig
+from lapis.config import DataConfig, ModelConfig, TrainingConfig, get_default_config
 from lapis.tokenizer.tokenizer import Tokenizer
 
 
@@ -24,15 +24,22 @@ def test_training_config():
     assert tc.max_steps > 0
 
 
-def test_data_config():
+def test_data_config_matches_current_smoke_dataset():
     dc = DataConfig()
-    assert dc.dataset_name == "lapis"
+    assert dc.dataset_name == "lapis-smoke"
 
 
-def test_local_tokenizer_round_trip():
-    tokenizer = Tokenizer()
-    text = "Lapis local test: 123!\n"
+def test_bpe_tokenizer_round_trip(tmp_path):
+    text = "Lapis local test: 123!\nUnicode café — 世界"
+    tokenizer = Tokenizer.train_from_iterator([text, "Lapis learns next-token prediction."], vocab_size=128, min_frequency=1)
     ids = tokenizer.encode(text)
-    assert tokenizer.vocab_size <= 128
-    assert max(ids) < 128
+    assert ids[0] == tokenizer.bos_id
+    assert ids[-1] == tokenizer.eos_id
+    assert max(ids) < tokenizer.vocab_size
     assert tokenizer.decode(ids) == text
+
+    tokenizer.save(str(tmp_path / "tokenizer"))
+    loaded = Tokenizer.load(str(tmp_path / "tokenizer"))
+    assert loaded.VERSION == tokenizer.VERSION
+    assert loaded.encode(text) == ids
+    assert loaded.decode(ids) == text
