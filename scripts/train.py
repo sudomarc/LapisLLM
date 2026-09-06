@@ -171,6 +171,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data", default=None, help="Optional UTF-8 text file")
     parser.add_argument("--tokenizer", default=None, help="Optional trained tokenizer directory")
+    parser.add_argument(
+        "--checkpoint",
+        default="checkpoints/latest.pt",
+        help="Output checkpoint path (defaults to checkpoints/latest.pt)",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -285,7 +290,7 @@ def main() -> None:
                 running_loss = 0.0
                 accumulation_count = 0
 
-    checkpoint_path = Path("checkpoints/latest.pt")
+    checkpoint_path = Path(args.checkpoint)
     save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, epoch, config, tokenizer)
     print(f"Checkpoint saved: {checkpoint_path}")
     print(f"Tokenizer saved: {checkpoint_path.parent / 'tokenizer'}")
