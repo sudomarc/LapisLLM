@@ -1,3 +1,6 @@
+import glob
+import json
+import os
 import re
 import unicodedata
 
@@ -50,12 +53,11 @@ def clean_dataset(input_dir, output_dir, clean_func=clean_text):
                 # Handle JSON arrays
                 cleaned = [clean_func(str(item)) for item in content]
                 with open(output_path, "w", encoding="utf-8") as f:
-                    import json
                     json.dump(cleaned, f, ensure_ascii=False)
             else:
                 cleaned = clean_func(content)
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(cleaned)
                     
-        except Exception as e:
+        except (IOError, ValueError, json.JSONDecodeError) as e:
             print(f"Error cleaning {filepath}: {e}")
