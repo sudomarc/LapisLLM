@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""One-command Colab pipeline for collecting data, training LAPIS, and syncing artifacts.
-
-Usage in Google Colab:
-    !python scripts/colab_train.py
-
-GitHub authentication is intentionally read from the environment (GITHUB_TOKEN)
-and is never stored in this file.
-"""
+"""One-command Colab pipeline for collecting data, training LAPIS, and syncing optional metadata."""
 
 from __future__ import annotations
 
@@ -25,11 +18,9 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
 
 
 def main() -> None:
-    # Install project dependencies.
     run([sys.executable, "-m", "pip", "install", "-e", "."])
     run([sys.executable, "-m", "pip", "install", "datasets"])
 
-    # Build the open training corpus used by the current LAPIS pipeline.
     run([
         sys.executable,
         "scripts/fetch_open_corpus.py",
@@ -45,13 +36,13 @@ def main() -> None:
         "50000000",
     ])
 
-    # The tokenizer must match the new model configuration; never reuse an
-    # incompatible tokenizer from an older checkpoint.
     tokenizer_dir = ROOT / "artifacts" / "tokenizer"
     if tokenizer_dir.exists():
         import shutil
         shutil.rmtree(tokenizer_dir)
 
+    checkpoint_path = ROOT / "outputs" / "latest.pt"
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     run([
         sys.executable,
         "-u",
@@ -64,35 +55,41 @@ def main() -> None:
         "--device",
         "cuda",
         "--checkpoint",
-        "checkpoints/latest.pt",
+        str(checkpoint_path),
     ])
 
-    # Optionally sync the trained checkpoint/metadata to GitHub.
-    # Authentication must be supplied as GITHUB_TOKEN by the Colab runtime.
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
         print("\nTraining complete. GITHUB_TOKEN not set; skipping GitHub push.", flush=True)
         return
 
-    remote = f"https://x-access-token:{token}@github.com/sudomarc/LapisLLM.git"
     safe_env = os.environ.copy()
+    safe_env["GIT_ASKPASS"] = "true"
+    safe_env.pop("GITHUB_TOKEN", None)
+
+    push_checkpoint = os.environ.get("LAPIS_PUSH_CHECKPOINT", "0").lower() in {"1", "true", "yes"}
+    if not push_checkpoint:
+        print(
+            "\nLAPIS_PUSH_CHECKPOINT is not enabled; generated checkpoints remain local.",
+            flush=True,
+        )
+        return
+
+    remote = f"https://x-access-token:{token}@github.com/sudomarc/LapisLLM.git"
+    safe_env["GIT_ASKPASS"] = "echo"
     run(["git", "config", "user.email", "actions@github.com"])
     run(["git", "config", "user.name", "Lapis Colab Trainer"])
     run(["git", "remote", "set-url", "origin", remote], env=safe_env)
-
-    # Keep source code/config changes, but explicitly include the ignored
-    # checkpoint and tokenizer produced by this training run.
-    run(["git", "add", "training_data/manifest.json"])
-    run(["git", "add", "-f", "checkpoints/latest.pt", "checkpoints/tokenizer"])
+    run(["git", "add", "training_data/open/manifest.json"])
 
     status = subprocess.run(["git", "diff", "--cached", "--quiet"])
     if status.returncode == 0:
-        print("\nNothing new to commit.", flush=True)
+        print("\nNo metadata changes to commit.", flush=True)
         return
 
-    run(["git", "commit", "-m", "train: update Lapis checkpoint"])
+    run(["git", "commit", "-m", "data: update training manifest"])
     run(["git", "push", "origin", "main"], env=safe_env)
-    print("\nLAPIS Colab pipeline complete.", flush=True)
+    print("\nLAPIS Colab metadata sync complete.", flush=True)
 
 
 if __name__ == "__main__":
