@@ -16,22 +16,48 @@ def get_config(path):
 class ModelConfig:
     def __init__(self, config=None):
         config = get_default_config() if config is None else config
-        model = config["model"]
+        model = config.get("model")
+        if not isinstance(model, dict):
+            raise ValueError("configuration.model must be a mapping")
+
         self.vocab_size = int(model["vocab_size"])
         self.hidden_size = int(model["hidden_size"])
         self.intermediate_size = int(model["intermediate_size"])
         self.num_layers = int(model["num_layers"])
         self.num_attention_heads = int(model["num_attention_heads"])
-        self.num_key_value_heads = int(model.get("num_key_value_heads", self.num_attention_heads))
+        self.num_key_value_heads = int(
+            model.get("num_key_value_heads", self.num_attention_heads)
+        )
         self.max_position_embeddings = int(model["max_position_embeddings"])
         self.rope_theta = float(model["rope_theta"])
         self.dropout = float(model["dropout"])
         self.bias = bool(model["bias"])
 
+        integer_fields = {
+            "vocab_size": self.vocab_size,
+            "hidden_size": self.hidden_size,
+            "intermediate_size": self.intermediate_size,
+            "num_layers": self.num_layers,
+            "num_attention_heads": self.num_attention_heads,
+            "num_key_value_heads": self.num_key_value_heads,
+            "max_position_embeddings": self.max_position_embeddings,
+        }
+        for name, value in integer_fields.items():
+            if value <= 0:
+                raise ValueError(f"model.{name} must be positive")
+
         if self.hidden_size % self.num_attention_heads:
             raise ValueError("hidden_size must be divisible by num_attention_heads")
         if self.num_attention_heads % self.num_key_value_heads:
             raise ValueError("num_attention_heads must be divisible by num_key_value_heads")
+        if (self.hidden_size // self.num_attention_heads) % 2:
+            raise ValueError("attention head dimension must be even for RoPE")
+        if self.max_position_embeddings < 2:
+            raise ValueError("model.max_position_embeddings must be at least 2")
+        if self.rope_theta <= 0:
+            raise ValueError("model.rope_theta must be positive")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("model.dropout must satisfy 0 <= dropout < 1")
 
     def count_parameters(self):
         """Estimate parameter counts from the architecture configuration."""
