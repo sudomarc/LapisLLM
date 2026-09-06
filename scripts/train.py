@@ -252,7 +252,17 @@ def main() -> None:
     train_text, _ = split_corpus(corpus, validation_fraction)
     tokenizer = resolve_tokenizer(config, train_text, args.resume, args.tokenizer)
 
-    config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
+    if args.resume:
+        configured_vocab = int(config["model"]["vocab_size"])
+        if tokenizer.vocab_size != configured_vocab:
+            raise CheckpointError(
+                "Resume tokenizer vocabulary size "
+                f"({tokenizer.vocab_size}) does not match configured model vocabulary "
+                f"({configured_vocab})."
+            )
+    else:
+        config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
+
     model_config = ModelConfig(config)
     training_config = TrainingConfig(config)
     device = resolve_device(config, args.device)
