@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 import torch
 
-CHECKPOINT_VERSION = 2
+CHECKPOINT_VERSION = 3
 
 
 class CheckpointError(RuntimeError):
@@ -25,18 +25,21 @@ def _json_safe_rng_state(state: tuple[Any, ...]) -> str:
 def _restore_python_rng_state(value: Any) -> None:
     if value is None:
         return
-    if isinstance(value, str):
-        raw = json.loads(value)
-        if not isinstance(raw, list) or len(raw) != 3:
-            raise CheckpointError("Invalid Python RNG state in checkpoint.")
-        version, internal_state, gauss_next = raw
-        state = (int(version), tuple(int(x) for x in internal_state), gauss_next)
-    elif isinstance(value, (tuple, list)) and len(value) == 3:
-        version, internal_state, gauss_next = value
-        state = (int(version), tuple(int(x) for x in internal_state), gauss_next)
-    else:
-        raise CheckpointError("Invalid Python RNG state in checkpoint.")
-    random.setstate(state)
+    try:
+        if isinstance(value, str):
+            raw = json.loads(value)
+            if not isinstance(raw, list) or len(raw) != 3:
+                raise ValueError
+            version, internal_state, gauss_next = raw
+            state = (int(version), tuple(int(x) for x in internal_state), gauss_next)
+        elif isinstance(value, (tuple, list)) and len(value) == 3:
+            version, internal_state, gauss_next = value
+            state = (int(version), tuple(int(x) for x in internal_state), gauss_next)
+        else:
+            raise ValueError
+        random.setstate(state)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise CheckpointError("Invalid Python RNG state in checkpoint.") from exc
 
 
 def _restore_torch_rng_state(state: Any) -> None:
@@ -70,11 +73,15 @@ def _restore_cuda_rng_state(state: Any) -> None:
         if item.numel() == 0:
             raise CheckpointError("Checkpoint contains an empty CUDA RNG state.")
         normalized.append(item.contiguous())
+    if len(normalized) != torch.cuda.device_count():
+        raise CheckpointError(
+            "Checkpoint CUDA RNG state count does not match the available CUDA devices."
+        )
     torch.cuda.set_rng_state_all(normalized)
 
 
 def _validate_required_fields(checkpoint: Mapping[str, Any]) -> None:
-    required = {"model_state_dict", "config", "step", "epoch"}
+    required = {"checkpoint_version", "model_state_dict", "config", "step", "epoch"}
     missing = sorted(required.difference(checkpoint))
     if missing:
         raise CheckpointError(
@@ -84,18 +91,28 @@ def _validate_required_fields(checkpoint: Mapping[str, Any]) -> None:
     if not isinstance(checkpoint["config"], Mapping):
         raise CheckpointError("Checkpoint config must be a mapping.")
 
-    version = int(checkpoint.get("checkpoint_version", 1))
+    try:
+        version = int(checkpoint["checkpoint_version"])
+        step = int(checkpoint["step"])
+        epoch = int(checkpoint["epoch"])
+    except (TypeError, ValueError) as exc:
+        raise CheckpointError("Checkpoint version, step, and epoch must be integers.") from exc
+
     if version > CHECKPOINT_VERSION:
         raise CheckpointError(
             f"Checkpoint version {version} is newer than supported version "
             f"{CHECKPOINT_VERSION}. Update Lapis before loading it."
         )
-    if int(checkpoint["step"]) < 0 or int(checkpoint["epoch"]) < 0:
+    if step < 0 or epoch < 0:
         raise CheckpointError("Checkpoint step and epoch must be non-negative.")
+
+    batch_in_epoch = checkpoint.get("batch_in_epoch", 0)
+    if not isinstance(batch_in_epoch, int) or batch_in_epoch < 0:
+        raise CheckpointError("Checkpoint batch_in_epoch must be a non-negative integer.")
 
 
 def load_checkpoint(path: str | Path, map_location: str | torch.device = "cpu") -> dict[str, Any]:
-    """Load and validate a Lapis checkpoint without unsafe object deserialization."""
+    """Load a Lapis checkpoint with PyTorch's restricted deserializer."""
     checkpoint_path = Path(path)
     if not checkpoint_path.is_file():
         raise CheckpointError(f"Checkpoint not found: {checkpoint_path}")
@@ -135,29 +152,22 @@ def validate_resume_compatibility(
     current_tokenizer_version: str,
     checkpoint_tokenizer_vocab_size: int | None,
     current_tokenizer_vocab_size: int,
+    checkpoint_seed: int | None = None,
+    current_seed: int | None = None,
 ) -> None:
-    """Reject resume attempts that would silently change model/training semantics."""
+    """Reject resume attempts that would silently change training semantics."""
     checkpoint_model = checkpoint_config.get("model")
     current_model = current_config.get("model")
     if not isinstance(checkpoint_model, Mapping) or not isinstance(current_model, Mapping):
         raise CheckpointError("Both checkpoint and current config must define model settings.")
 
     model_keys = (
-        "vocab_size",
-        "hidden_size",
-        "intermediate_size",
-        "num_layers",
-        "num_attention_heads",
-        "num_key_value_heads",
-        "max_position_embeddings",
-        "rope_theta",
-        "dropout",
-        "bias",
+        "vocab_size", "hidden_size", "intermediate_size", "num_layers",
+        "num_attention_heads", "num_key_value_heads", "max_position_embeddings",
+        "rope_theta", "dropout", "bias",
     )
     mismatches = [
-        key
-        for key in model_keys
-        if checkpoint_model.get(key) != current_model.get(key)
+        key for key in model_keys if checkpoint_model.get(key) != current_model.get(key)
     ]
     if mismatches:
         raise CheckpointError(
@@ -171,18 +181,11 @@ def validate_resume_compatibility(
         raise CheckpointError("Both checkpoint and current config must define training settings.")
 
     training_keys = (
-        "learning_rate",
-        "weight_decay",
-        "warmup_steps",
-        "max_steps",
-        "micro_batch_size",
-        "gradient_accumulation_steps",
-        "gradient_clip",
+        "learning_rate", "weight_decay", "warmup_steps", "max_steps",
+        "micro_batch_size", "gradient_accumulation_steps", "gradient_clip",
     )
     mismatched_training = [
-        key
-        for key in training_keys
-        if checkpoint_training.get(key) != current_training.get(key)
+        key for key in training_keys if checkpoint_training.get(key) != current_training.get(key)
     ]
     if mismatched_training:
         raise CheckpointError(
@@ -191,15 +194,17 @@ def validate_resume_compatibility(
         )
 
     if checkpoint_tokenizer_version not in (None, current_tokenizer_version):
-        raise CheckpointError(
-            "Checkpoint tokenizer version does not match the current tokenizer."
-        )
+        raise CheckpointError("Checkpoint tokenizer version does not match the current tokenizer.")
     if (
         checkpoint_tokenizer_vocab_size is not None
         and int(checkpoint_tokenizer_vocab_size) != int(current_tokenizer_vocab_size)
     ):
         raise CheckpointError(
             "Checkpoint tokenizer vocabulary size does not match the current tokenizer."
+        )
+    if checkpoint_seed is not None and current_seed is not None and int(checkpoint_seed) != int(current_seed):
+        raise CheckpointError(
+            f"Checkpoint seed {checkpoint_seed} does not match current seed {current_seed}."
         )
 
 
@@ -211,6 +216,8 @@ def save_checkpoint(
     scheduler: Any,
     step: int,
     epoch: int,
+    batch_in_epoch: int = 0,
+    seed: int | None = None,
     config: Mapping[str, Any],
     tokenizer: Any,
     data_fingerprint: str | None = None,
@@ -218,8 +225,10 @@ def save_checkpoint(
     """Atomically save a self-describing checkpoint."""
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    if step < 0 or epoch < 0:
-        raise ValueError("step and epoch must be non-negative")
+    if step < 0 or epoch < 0 or batch_in_epoch < 0:
+        raise ValueError("step, epoch, and batch_in_epoch must be non-negative")
+    if seed is not None and seed < 0:
+        raise ValueError("seed must be non-negative")
 
     payload = {
         "checkpoint_version": CHECKPOINT_VERSION,
@@ -228,6 +237,8 @@ def save_checkpoint(
         "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
         "step": int(step),
         "epoch": int(epoch),
+        "batch_in_epoch": int(batch_in_epoch),
+        "seed": None if seed is None else int(seed),
         "config": dict(config),
         "tokenizer_version": tokenizer.VERSION,
         "tokenizer_vocab_size": int(tokenizer.vocab_size),
@@ -241,9 +252,7 @@ def save_checkpoint(
     }
 
     fd, temp_name = tempfile.mkstemp(
-        prefix=f".{checkpoint_path.name}.",
-        suffix=".tmp",
-        dir=checkpoint_path.parent,
+        prefix=f".{checkpoint_path.name}.", suffix=".tmp", dir=checkpoint_path.parent
     )
     os.close(fd)
     temp_path = Path(temp_name)
@@ -255,6 +264,4 @@ def save_checkpoint(
     finally:
         temp_path.unlink(missing_ok=True)
 
-    # Keep the tokenizer as a convenient standalone artifact, while the checkpoint
-    # itself remains self-contained so the two can never be required as a pair.
     tokenizer.save(str(checkpoint_path.parent / "tokenizer"))
