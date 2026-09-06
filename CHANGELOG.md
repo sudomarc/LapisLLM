@@ -2,6 +2,37 @@
 
 All notable changes to LapisLLM are documented here.
 
+## [0.1.2] - 2026-09-06
+
+### Fixed
+
+- Made configuration loading independent of the current working directory.
+- Restored the declared `prepare_data` package entry point with deterministic UTF-8 text preparation.
+- Validated model dimensions, RoPE head dimensions, token ranges, target ranges, and invalid all-padding targets before execution.
+- Removed duplicate dropout application in the SwiGLU path.
+- Made explicit CUDA requests fail clearly when CUDA is unavailable instead of silently switching devices.
+- Removed silent CPU dtype coercion; unsupported CPU dtypes now fail early.
+- Hardened checkpoint loading with required metadata, version checks, strict state loading, atomic writes, tokenizer consistency checks, and deterministic epoch/batch resume metadata.
+- Hardened generation with parameter validation, greedy `temperature=0`, prompt context validation, and tokenizer/model compatibility checks.
+- Removed generated checkpoint artifacts from version control.
+
+### Tests and CI
+
+- Added regression tests for configuration, model validation, generation edge cases, deterministic data ordering, checkpoint metadata/persistence, and the restored data-preparation CLI.
+- CI now verifies bytecode compilation, Ruff, the test suite, wheel construction, installed CLI entry points, CPU training, resume, evaluation, and generation smoke tests.
+
+### Documentation
+
+- Updated the release status to distinguish correctness/reproducibility work from benchmark or capability claims.
+- `configs/tiny.yaml` remains the canonical development profile; larger model names remain roadmap targets unless explicitly released and evaluated.
+
+### Known limitations
+
+- Exact replay is implemented for the current single-process deterministic data loader, but distributed and multi-worker replay is not supported.
+- Mixed-precision training, distributed training, efficient KV-cache generation, and comprehensive benchmark evaluation remain out of scope for this release.
+
+---
+
 ## [0.1.1] - 2026-09-06
 
 ### Added
@@ -21,25 +52,6 @@ All notable changes to LapisLLM are documented here.
 - Normalized partial gradient-accumulation groups so their update scale does not depend on the number of batches in an epoch.
 - Updated stale tests to match the current tokenizer and data configuration.
 - Replaced broad exception handling in the data cleaner with specific exceptions.
-
-### Documentation
-
-- Reworked the README into a model/project overview with explicit architecture, status, limitations, validation philosophy, and roadmap sections.
-- Removed unsupported claims about large-scale training, GGUF export, KV-cache maturity, and production readiness.
-
-### Validation status
-
-CI covers automated correctness and lint checks. The release does **not** claim benchmark quality or general-purpose language capability. The next milestone is validation through tiny-dataset overfitting, held-out loss/perplexity, deterministic checkpoint tests, and generation regression tests.
-
-### Not yet implemented
-
-- Exact mid-epoch data-loader/sampler replay.
-- Mixed-precision training.
-- Distributed training.
-- Efficient KV-cache generation.
-- Large-scale pretraining.
-- Comprehensive benchmark evaluation.
-- Production-grade web-scale data processing.
 
 ---
 
