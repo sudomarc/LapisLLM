@@ -5,13 +5,17 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import random
+import shutil
+import tempfile
 from pathlib import Path
 
 import torch
 import yaml
 from torch.utils.data import DataLoader, Dataset
 
+from lapis.config.base import resolve_device as resolve_requested_device
 from lapis.config.model_config import ModelConfig
 from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
@@ -67,12 +71,7 @@ def load_yaml(path: str) -> dict:
 
 def resolve_device(config: dict, requested: str | None) -> torch.device:
     value = requested or config.get("runtime", {}).get("device", "auto")
-    if value == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if value.startswith("cuda") and not torch.cuda.is_available():
-        print("CUDA requested but unavailable; falling back to CPU.")
-        return torch.device("cpu")
-    return torch.device(value)
+    return resolve_requested_device(value)
 
 
 def resolve_dtype(config: dict, device: torch.device) -> torch.dtype:
@@ -117,25 +116,73 @@ def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
 
 
 def save_checkpoint(path: Path, model, optimizer, scheduler, step, epoch, config, tokenizer):
+    """Stage checkpoint and tokenizer together, then publish with rollback."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
-            "step": step,
-            "epoch": epoch,
-            "config": config,
-            "tokenizer_version": tokenizer.VERSION,
-            "python_rng_state": random.getstate(),
-            "torch_rng_state": torch.get_rng_state().clone().cpu(),
-            "cuda_rng_state": [state.clone().cpu() for state in torch.cuda.get_rng_state_all()]
-            if torch.cuda.is_available()
-            else None,
-        },
-        path,
-    )
-    tokenizer.save(str(path.parent / "tokenizer"))
+    generation_dir = Path(tempfile.mkdtemp(prefix=".generation-", dir=path.parent))
+    staged_checkpoint = generation_dir / path.name
+    staged_tokenizer = generation_dir / "tokenizer"
+    visible_tokenizer = path.parent / "tokenizer"
+    checkpoint_backup = path.parent / f".{path.name}.backup"
+    tokenizer_backup = path.parent / ".tokenizer.backup"
+    published_checkpoint = False
+    published_tokenizer = False
+    old_checkpoint = path.exists()
+    old_tokenizer = visible_tokenizer.exists()
+
+    try:
+        torch.save(
+            {
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+                "step": step,
+                "epoch": epoch,
+                "config": config,
+                "tokenizer_version": tokenizer.VERSION,
+                "python_rng_state": random.getstate(),
+                "torch_rng_state": torch.get_rng_state().clone().cpu(),
+                "cuda_rng_state": [state.clone().cpu() for state in torch.cuda.get_rng_state_all()]
+                if torch.cuda.is_available()
+                else None,
+            },
+            staged_checkpoint,
+        )
+        tokenizer.save(str(staged_tokenizer))
+
+        if checkpoint_backup.exists():
+            checkpoint_backup.unlink()
+        if tokenizer_backup.exists():
+            shutil.rmtree(tokenizer_backup)
+        if old_checkpoint:
+            os.replace(path, checkpoint_backup)
+        if old_tokenizer:
+            os.replace(visible_tokenizer, tokenizer_backup)
+
+        os.replace(staged_checkpoint, path)
+        published_checkpoint = True
+        os.replace(staged_tokenizer, visible_tokenizer)
+        published_tokenizer = True
+
+        if checkpoint_backup.exists():
+            checkpoint_backup.unlink()
+        if tokenizer_backup.exists():
+            shutil.rmtree(tokenizer_backup)
+    except Exception:
+        if published_tokenizer and visible_tokenizer.exists():
+            shutil.rmtree(visible_tokenizer)
+        if old_tokenizer and tokenizer_backup.exists():
+            os.replace(tokenizer_backup, visible_tokenizer)
+        if published_checkpoint and path.exists():
+            path.unlink()
+        if old_checkpoint and checkpoint_backup.exists():
+            os.replace(checkpoint_backup, path)
+        raise
+    finally:
+        shutil.rmtree(generation_dir, ignore_errors=True)
+        if checkpoint_backup.exists():
+            checkpoint_backup.unlink()
+        if tokenizer_backup.exists():
+            shutil.rmtree(tokenizer_backup)
 
 
 def restore_torch_rng_state(state) -> None:
