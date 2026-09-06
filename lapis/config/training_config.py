@@ -22,6 +22,7 @@ class TrainingConfig:
         self.micro_batch_size = int(training["micro_batch_size"])
         self.gradient_accumulation_steps = int(training["gradient_accumulation_steps"])
         self.gradient_clip = float(training["gradient_clip"])
+        self.save_every_steps = int(training.get("save_every_steps", 0))
 
         if self.learning_rate <= 0:
             raise ValueError("training.learning_rate must be positive")
@@ -45,6 +46,8 @@ class TrainingConfig:
             raise ValueError("training.gradient_clip must be positive")
         if self.warmup_steps > self.max_steps:
             raise ValueError("training.warmup_steps cannot exceed training.max_steps")
+        if self.save_every_steps < 0:
+            raise ValueError("training.save_every_steps must be non-negative")
 
     def get_effective_batch_size(self):
         return self.micro_batch_size * self.gradient_accumulation_steps
