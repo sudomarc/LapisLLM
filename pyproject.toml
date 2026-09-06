@@ -34,3 +34,4 @@ addopts = []
 
 [tool.ruff]
 line-length = 88
+select = ["F"]
