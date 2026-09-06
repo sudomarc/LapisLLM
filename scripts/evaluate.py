@@ -13,7 +13,12 @@ from lapis.config.base import resolve_path
 from lapis.config.model_config import ModelConfig
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-from scripts.train import DEFAULT_CORPUS, load_checkpoint, resolve_training_seq_len
+from scripts.train import (
+    DEFAULT_CORPUS,
+    TextDataset,
+    load_checkpoint,
+    resolve_training_seq_len,
+)
 
 
 def main() -> None:
@@ -65,9 +70,7 @@ def main() -> None:
     )
     model_config = ModelConfig(config)
     seq_len = resolve_training_seq_len(model_config, config)
-    dataset = __import__("scripts.train", fromlist=["TextDataset"]).TextDataset(
-        tokenizer.encode(corpus), seq_len, tokenizer.pad_id
-    )
+    dataset = TextDataset(tokenizer.encode(corpus), seq_len, tokenizer.pad_id)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
     total_loss = 0.0
