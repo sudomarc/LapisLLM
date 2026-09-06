@@ -131,6 +131,7 @@ def test_checkpoint_contains_progress_and_scheduler_state(tmp_path: Path):
     assert (tmp_path / "tokenizer" / "tokenizer.json").is_file()
 
     bad_config = load_config("configs/local-dev.yaml")
+    bad_config["model"]["vocab_size"] = tokenizer.vocab_size
     bad_config["training"]["max_steps"] += 1
     with pytest.raises(ValueError, match="max_steps"):
         _assert_resume_compatibility(loaded, bad_config, tokenizer)
