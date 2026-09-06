@@ -24,9 +24,9 @@ def test_training_config():
     assert tc.max_steps > 0
 
 
-def test_data_config_matches_current_smoke_dataset():
+def test_data_config_matches_current_open_mixture_dataset():
     dc = DataConfig()
-    assert dc.dataset_name == "lapis-smoke"
+    assert dc.dataset_name == "lapis-open-mixture"
 
 
 def test_bpe_tokenizer_round_trip(tmp_path):
