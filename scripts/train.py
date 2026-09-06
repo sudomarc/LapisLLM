@@ -201,6 +201,20 @@ def resolve_training_seq_len(model_config: ModelConfig, config: dict) -> int:
     return min(configured, max_input_length)
 
 
+def resolve_tokenizer(config: dict, corpus: str, resume_path: str | None, explicit_path: str | None) -> Tokenizer:
+    """Load the checkpoint tokenizer on resume; only train one for fresh runs."""
+    if explicit_path:
+        return Tokenizer.load(explicit_path)
+
+    if resume_path:
+        checkpoint_tokenizer = Path(resume_path).parent / "tokenizer"
+        if (checkpoint_tokenizer / "tokenizer.json").exists():
+            print(f"Loading tokenizer from checkpoint: {checkpoint_tokenizer}")
+            return Tokenizer.load(str(checkpoint_tokenizer))
+
+    return load_or_train_tokenizer(config, corpus)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train LAPIS")
     parser.add_argument("--config", default="configs/local-dev.yaml")
@@ -222,7 +236,7 @@ def main() -> None:
 
     config = load_yaml(args.config)
     corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
-    tokenizer = Tokenizer.load(args.tokenizer) if args.tokenizer else load_or_train_tokenizer(config, corpus)
+    tokenizer = resolve_tokenizer(config, corpus, args.resume, args.tokenizer)
 
     config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
     model_config = ModelConfig(config)
