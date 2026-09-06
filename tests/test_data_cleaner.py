@@ -18,15 +18,17 @@ def test_clean_dataset_fails_on_empty_input(tmp_path: Path):
         clean_dataset(source, tmp_path / "out")
 
 
-def test_clean_dataset_preserves_json_arrays(tmp_path: Path):
+def test_clean_dataset_preserves_json_arrays_and_unicode(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
-    (source / "data.json").write_text(json.dumps([" café  ", "hello"]), encoding="utf-8")
+    (source / "data.json").write_text(
+        json.dumps([" café  ", "hello", "中文"], ensure_ascii=False), encoding="utf-8"
+    )
 
     output = tmp_path / "out"
     clean_dataset(source, output)
     cleaned = json.loads((output / "data.json").read_text(encoding="utf-8"))
-    assert cleaned == ["cafe", "hello"]
+    assert cleaned == ["café", "hello", "中文"]
 
 
 def test_clean_dataset_rejects_invalid_json(tmp_path: Path):
