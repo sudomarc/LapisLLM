@@ -1,3 +1,5 @@
+import pytest
+
 from lapis.config import DataConfig, ModelConfig, TrainingConfig, get_default_config
 from lapis.tokenizer.tokenizer import Tokenizer
 
@@ -22,6 +24,7 @@ def test_training_config():
     tc = TrainingConfig()
     assert tc.learning_rate > 0
     assert tc.max_steps > 0
+    assert tc.batch_size == tc.get_effective_batch_size()
 
 
 def test_data_config_matches_current_open_mixture_dataset():
@@ -29,9 +32,27 @@ def test_data_config_matches_current_open_mixture_dataset():
     assert dc.dataset_name == "lapis-open-mixture"
 
 
+def test_invalid_model_configuration_fails_early():
+    config = get_default_config()
+    config["model"]["num_key_value_heads"] = 3
+    with pytest.raises(ValueError, match="divisible"):
+        ModelConfig(config)
+
+
+def test_invalid_training_batch_configuration_fails_early():
+    config = get_default_config()
+    config["training"]["batch_size"] = 3
+    with pytest.raises(ValueError, match="batch_size"):
+        TrainingConfig(config)
+
+
 def test_bpe_tokenizer_round_trip(tmp_path):
     text = "Lapis local test: 123!\nUnicode café — 世界"
-    tokenizer = Tokenizer.train_from_iterator([text, "Lapis learns next-token prediction."], vocab_size=128, min_frequency=1)
+    tokenizer = Tokenizer.train_from_iterator(
+        [text, "Lapis learns next-token prediction."],
+        vocab_size=128,
+        min_frequency=1,
+    )
     ids = tokenizer.encode(text)
     assert ids[0] == tokenizer.bos_id
     assert ids[-1] == tokenizer.eos_id
