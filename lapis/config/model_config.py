@@ -1,6 +1,24 @@
 from __future__ import annotations
 
+import math
+
 from lapis.config.base import load_config
+
+
+MODEL_CONFIG_KEYS = frozenset(
+    {
+        "vocab_size",
+        "hidden_size",
+        "intermediate_size",
+        "num_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "max_position_embeddings",
+        "rope_theta",
+        "dropout",
+        "bias",
+    }
+)
 
 
 def get_default_config():
@@ -11,6 +29,12 @@ def get_default_config():
 def get_config(path):
     """Load a configuration from a YAML file path."""
     return load_config(path)
+
+
+def model_config_kwargs(config: dict) -> dict:
+    """Return only constructor arguments accepted by :class:`LapisModel`."""
+    model = config["model"]
+    return {key: model[key] for key in MODEL_CONFIG_KEYS if key in model}
 
 
 class ModelConfig:
@@ -28,6 +52,10 @@ class ModelConfig:
         self.dropout = float(model["dropout"])
         self.bias = bool(model["bias"])
 
+        if not math.isfinite(self.rope_theta) or self.rope_theta <= 0:
+            raise ValueError("rope_theta must be finite and positive")
+        if not math.isfinite(self.dropout) or not 0 <= self.dropout < 1:
+            raise ValueError("dropout must be finite and in [0, 1)")
         if self.hidden_size % self.num_attention_heads:
             raise ValueError("hidden_size must be divisible by num_attention_heads")
         if self.num_attention_heads % self.num_key_value_heads:
