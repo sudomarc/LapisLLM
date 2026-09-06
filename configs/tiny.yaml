@@ -1,16 +1,14 @@
-# Lapis Tiny model configuration
-# A small model for quick experiments
-
+# Lapis Tiny: small enough for local CPU development and real training experiments.
 model:
-  vocab_size: 50304
-  hidden_size: 384
-  intermediate_size: 768
+  vocab_size: 256
+  hidden_size: 128
+  intermediate_size: 256
   num_layers: 2
-  num_attention_heads: 6
+  num_attention_heads: 4
   num_key_value_heads: 2
-  max_position_embeddings: 512
+  max_position_embeddings: 128
   rope_theta: 10000.0
-  dropout: 0.1
+  dropout: 0.0
   bias: true
 
 training:
@@ -18,12 +16,17 @@ training:
   weight_decay: 0.1
   warmup_steps: 10
   max_steps: 200
-  batch_size: 8
+  batch_size: 4
   micro_batch_size: 2
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
   gradient_clip: 1.0
 
 runtime:
-  dtype: "bfloat16"
-  device: "cpu"
+  dtype: "float32"
+  device: "auto"
   compile: false
+
+# Built-in corpus keeps the first smoke training run self-contained.
+data:
+  dataset_name: "lapis-smoke"
+  max_seq_length: 128
