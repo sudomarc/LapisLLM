@@ -67,6 +67,22 @@ class LapisModel(nn.Module):
         self.lm_head = nn.Linear(hidden_size, vocab_size, bias=bias)
         self.apply(self._init_weights)
 
+    def _apply(self, fn):
+        """Move/cast parameters while preserving complex RoPE buffers.
+
+        PyTorch's generic Module.to()/half()/float() conversion casts buffers to
+        the target parameter dtype. RoPE cis frequencies are intentionally
+        complex64, so recalculate the non-persistent buffer after the conversion
+        instead of allowing complex-to-real truncation.
+        """
+        super()._apply(fn)
+        self.freqs_cis = precompute_freqs_cis(
+            self.hidden_size // self.num_attention_heads,
+            self.max_position_embeddings,
+            self.rope_theta,
+        ).to(device=self.embed_tokens.weight.device, dtype=torch.complex64)
+        return self
+
     @staticmethod
     def _init_weights(module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
