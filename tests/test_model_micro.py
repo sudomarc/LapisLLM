@@ -1,34 +1,49 @@
-"""Micro-test: random input -> model -> logits -> loss -> backpropagation."""
+"""Small, real forward/backward sanity tests for the LAPIS model."""
 
 import torch
-import torch.nn as nn
+
 from lapis.model.lapis_model import LapisModel
 
 
-def test_micro():
-    model = LapisModel(vocab_size=50304, hidden_size=384, num_layers=2)
+def test_micro_forward_and_backward():
+    model = LapisModel(
+        vocab_size=256,
+        hidden_size=128,
+        intermediate_size=256,
+        num_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+        dropout=0.0,
+    )
     model.train()
 
-    # Random input tokens
-    batch_size = 2
-    seq_len = 16
-    input_ids = torch.randint(0, 50304, (batch_size, seq_len))
+    input_ids = torch.randint(0, 256, (2, 16))
+    logits, loss = model(input_ids, labels=input_ids)
 
-    # Forward (model returns (logits, loss))
-    logits, loss = model(input_ids)
-    assert logits.shape == (batch_size, seq_len, 50304)
+    assert logits.shape == (2, 16, 256)
+    assert loss is not None
+    assert torch.isfinite(loss)
 
-    # Compute loss (next-token prediction) - use the model's loss if available
-    if loss is None:
-        target_ids = input_ids[:, 1:]
-        loss_fn = nn.CrossEntropyLoss()
-        loss = loss_fn(logits[:, :-1, :].reshape(-1, 50304), target_ids.reshape(-1))
-
-    # Backward
     loss.backward()
+    assert all(
+        parameter.grad is not None
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
 
-    # Check loss is finite
-    assert not torch.isnan(loss)
-    assert not torch.isinf(loss)
 
-    print(f"Micro-test passed: loss = {loss.item():.4f}")
+def test_parameter_count_matches_model():
+    model = LapisModel(
+        vocab_size=256,
+        hidden_size=128,
+        intermediate_size=256,
+        num_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=64,
+        dropout=0.0,
+    )
+    breakdown = model.parameter_breakdown()
+    assert breakdown["total"] == model.num_parameters()
+    assert breakdown["total"] == sum(p.numel() for p in model.parameters())
