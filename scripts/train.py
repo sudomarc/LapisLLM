@@ -49,7 +49,10 @@ class TextDataset(Dataset):
 
     def __getitem__(self, index: int):
         sample = self.samples[index]
-        return sample[:-1], sample[1:]
+        inputs = sample[:-1]
+        labels = sample[1:].clone()
+        labels[labels == self.pad_id] = -100
+        return inputs, labels
 
 
 def load_yaml(path: str) -> dict:
@@ -68,10 +71,15 @@ def resolve_device(config: dict, requested: str | None) -> torch.device:
 
 
 def resolve_dtype(config: dict, device: torch.device) -> torch.dtype:
-    requested = config.get("runtime", {}).get("dtype", "float32").lower()
-    mapping = {"float32": torch.float32, "fp32": torch.float32,
-               "float16": torch.float16, "fp16": torch.float16,
-               "bfloat16": torch.bfloat16, "bf16": torch.bfloat16}
+    requested = str(config.get("runtime", {}).get("dtype", "float32")).lower()
+    mapping = {
+        "float32": torch.float32,
+        "fp32": torch.float32,
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+    }
     dtype = mapping.get(requested, torch.float32)
     if device.type == "cpu" and dtype in (torch.float16, torch.bfloat16):
         return torch.float32
@@ -90,15 +98,14 @@ def save_checkpoint(path: Path, model, optimizer, scheduler, step, config, token
         },
         path,
     )
-    tokenizer_dir = path.parent / "tokenizer"
-    tokenizer.save(str(tokenizer_dir))
+    tokenizer.save(str(path.parent / "tokenizer"))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train LAPIS")
     parser.add_argument("--config", default="configs/tiny.yaml")
     parser.add_argument("--resume", default=None)
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data", default=None, help="Optional UTF-8 text file")
@@ -165,8 +172,7 @@ def main() -> None:
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
-        if "optimizer_state_dict" in checkpoint:
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        optimizer.load_state_dict(checkpoint.get("optimizer_state_dict", optimizer.state_dict()))
         if checkpoint.get("scheduler_state_dict"):
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_step = int(checkpoint.get("step", 0))
@@ -174,10 +180,11 @@ def main() -> None:
 
     model.train()
     step = start_step
-    optimizer.zero_grad(set_to_none=True)
     running_loss = 0.0
+    optimizer.zero_grad(set_to_none=True)
 
-    for _epoch in range(args.epochs):
+    while step < training_config.max_steps and args.epochs > 0:
+        args.epochs -= 1
         for input_ids, labels in dataloader:
             if step >= training_config.max_steps:
                 break
@@ -198,14 +205,13 @@ def main() -> None:
 
             step += 1
             if step % 10 == 0:
-                avg_loss = running_loss / min(10, step - start_step)
+                avg_loss = running_loss / 10
                 ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
-                lr = optimizer.param_groups[0]["lr"]
-                print(f"step={step:04d} loss={avg_loss:.4f} ppl={ppl:.2f} lr={lr:.6g}")
+                print(
+                    f"step={step:04d} loss={avg_loss:.4f} "
+                    f"ppl={ppl:.2f} lr={optimizer.param_groups[0]['lr']:.6g}"
+                )
                 running_loss = 0.0
-
-        if step >= training_config.max_steps:
-            break
 
     checkpoint_path = Path("checkpoints/latest.pt")
     save_checkpoint(checkpoint_path, model, optimizer, scheduler, step, config, tokenizer)
