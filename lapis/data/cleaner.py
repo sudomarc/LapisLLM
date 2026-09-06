@@ -1,13 +1,15 @@
 import glob
 import json
-import os
 import re
 import unicodedata
 from pathlib import Path
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]")
+
+
 def normalize_unicode(text):
-    """Normalize unicode text to NFKC form."""
+    """Normalize Unicode text to NFKC form."""
     if not isinstance(text, str):
         raise TypeError("text must be a string")
     return unicodedata.normalize("NFKC", text)
@@ -19,9 +21,9 @@ def remove_extra_whitespace(text):
 
 
 def remove_special_chars(text, pattern=None):
-    """Remove characters excluded by the configured pattern."""
+    """Remove control characters while preserving printable Unicode by default."""
     if pattern is None:
-        pattern = r"[^\x20-\x7E\n\r\t]"
+        return _CONTROL_CHARS.sub("", text)
     return re.sub(pattern, "", text)
 
 
