@@ -5,12 +5,14 @@ import torch
 
 from lapis.config.base import load_config
 from lapis.config.training_config import TrainingConfig
+from lapis.data.cleaner import clean_dataset
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
 from scripts.generate import sample_next_token, validate_generation_parameters
 from scripts.prepare_data import prepare_data
 from scripts.train import (
     TextDataset,
+    _assert_resume_compatibility,
     _build_dataloader,
     _checkpoint_payload,
     build_scheduler,
@@ -128,6 +130,11 @@ def test_checkpoint_contains_progress_and_scheduler_state(tmp_path: Path):
     assert loaded["batch_index"] == 5
     assert (tmp_path / "tokenizer" / "tokenizer.json").is_file()
 
+    bad_config = load_config("configs/local-dev.yaml")
+    bad_config["training"]["max_steps"] += 1
+    with pytest.raises(ValueError, match="max_steps"):
+        _assert_resume_compatibility(loaded, bad_config, tokenizer)
+
 
 def test_prepare_data_is_deterministic_and_rejects_empty_input(tmp_path: Path):
     source = tmp_path / "source"
@@ -143,3 +150,11 @@ def test_prepare_data_is_deterministic_and_rejects_empty_input(tmp_path: Path):
     (empty / "blank.txt").write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="empty"):
         prepare_data(empty, tmp_path / "empty.txt")
+
+
+def test_clean_dataset_failures_are_not_silenced(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "bad.json").write_text("{invalid", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid JSON input"):
+        clean_dataset(source, tmp_path / "out")
