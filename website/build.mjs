@@ -1,18 +1,24 @@
-import fs from "node:fs"; import path from "node:path";
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
 const root=new URL(".",import.meta.url).pathname;
-const bad=[];
-const req=["index.html","styles.css","script.js","data.js","favicon.svg","og.svg","manifest.webmanifest","robots.txt","sitemap.xml"];
-for(const f of req) if(!fs.existsSync(path.join(root,f))) bad.push(`missing ${f}`);
-const html=[];
-const walk=d=>{for(const n of fs.readdirSync(d)){const p=path.join(d,n),s=fs.statSync(p);if(s.isDirectory()&&n!=="node_modules")walk(p);else if(n.endsWith(".html"))html.push(p)}};
-walk(root);
-for(const f of html){const t=fs.readFileSync(f,"utf8");if(!t.includes('id="app"'))bad.push(`missing app shell ${path.relative(root,f)}`);if(!t.includes("styles.css"))bad.push(`missing css ${path.relative(root,f)}`);if(!t.includes('type="application/ld+json"'))bad.push(`missing JSON-LD ${path.relative(root,f)}`)}
-const skillsRoot=path.join(root,"content","skills");const skills=fs.existsSync(skillsRoot)?fs.readdirSync(skillsRoot).filter(x=>fs.statSync(path.join(skillsRoot,x)).isDirectory()):[];
-if(skills.length!==10)bad.push(`expected 10 skill packages, found ${skills.length}`);
-for(const slug of skills)if(!fs.existsSync(path.join(skillsRoot,slug,"SKILL.md")))bad.push(`missing SKILL.md ${slug}`);
-const docSources=["getting-started","models","development","training","skills","reference"];for(const slug of docSources)if(!fs.existsSync(path.join(root,"content","docs",slug+".md")))bad.push(`missing doc source ${slug}`);
-const researchSources=["architecture","tokenizer","training","evaluation","limitations"];for(const slug of researchSources)if(!fs.existsSync(path.join(root,"content","research",slug+".md")))bad.push(`missing research source ${slug}`);
-const routes=["index.html","models/index.html","models/lapis-tiny/index.html","models/lapis-small/index.html","models/lapis-1b/index.html","models/lapis-3b/index.html","models/lapis-7b/index.html","skills/index.html","docs/index.html","research/index.html","roadmap/index.html","changelog/index.html","about/index.html","404.html"];
-for(const f of routes)if(!fs.existsSync(path.join(root,f)))bad.push(`missing route ${f}`);
-if(bad.length){console.error(bad.join("\n"));process.exit(1)}
-console.log(`Lapis website validation passed: ${html.length} HTML pages; ${skills.length} skill packages.`);
+const lintOnly=process.argv.includes("--lint"),bad=[];
+const p=(x)=>path.join(root,x),exists=(x)=>fs.existsSync(p(x));
+const esc=(v)=>String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+const inline=(v)=>esc(v).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
+function md(src){const out=[];let code=false,buf=[],list=false;const close=()=>{if(list){out.push("</ul>");list=false;}};for(const raw of String(src).replaceAll("\r\n","\n").split("\n")){const s=raw.trim();if(s.startsWith("```")){close();if(code){out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);buf=[];code=false;}else code=true;continue;}if(code){buf.push(raw);continue;}if(!s){close();continue;}const h=/^(#{1,3})\s+(.+)$/.exec(s);if(h){close();out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);continue;}const b=/^[-*]\s+(.+)$/.exec(s);if(b){if(!list){out.push("<ul>");list=true;}out.push(`<li>${inline(b[1])}</li>`);continue;}close();out.push(`<p>${inline(s)}</p>`);}close();if(code)out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);return out.join("");}
+function fm(src){const m=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/m.exec(src);if(!m)return{meta:{},body:src};const meta={};for(const l of m[1].split("\n")){const i=l.indexOf(":");if(i>0)meta[l.slice(0,i).trim()]=l.slice(i+1).trim().replace(/^['"]|['"]$/g,"");}return{meta,body:m[2]};}
+function section(src,name){const ls=src.split("\n"),i=ls.findIndex(l=>l.trim().toLowerCase()===`## ${name.toLowerCase()}`);if(i<0)return"";const r=[];for(let j=i+1;j<ls.length&&!/^##\s+/.test(ls[j].trim());j++)r.push(ls[j]);return r.join("\n").trim();}
+function data(){const src=fs.readFileSync(p("data.js"),"utf8").trim(),m=/^window\.LAPIS_DATA=(.*);?$/.exec(src);if(!m)throw Error("invalid data.js");return JSON.parse(m[1].replace(/;$/, ""));}
+function enrich(entries,dir,isSkill=false){return entries.map(e=>{const rel=isSkill?`content/skills/${e.slug}/SKILL.md`:`${dir}/${e.slug}.md`;if(!exists(rel)){bad.push(`missing source ${rel}`);return e;}const src=fs.readFileSync(p(rel),"utf8"),x=isSkill?fm(src):{meta:{},body:src};return {...e,...x.meta,sourcePath:rel,contentMd:x.body,contentHtml:md(x.body),...(isSkill?{inputs:section(x.body,"Inputs"),outputs:section(x.body,"Outputs"),workflow:section(x.body,"Workflow"),limitations:section(x.body,"Limitations"),safety:section(x.body,"Safety")}:{})};});}
+function walk(dir,out=[]){for(const n of fs.readdirSync(dir)){const f=path.join(dir,n),s=fs.statSync(f);if(s.isDirectory()&&n!=="node_modules")walk(f,out);else if(n.endsWith(".html"))out.push(f);}return out;}
+for(const r of ["index.html","404.html","models/index.html","skills/index.html","docs/index.html","research/index.html","roadmap/index.html","changelog/index.html","about/index.html"])if(!exists(r))bad.push(`missing ${r}`);
+for(const x of ["styles.css","script.js","data.js","favicon.svg","og.svg","manifest.webmanifest","robots.txt","sitemap.xml"])if(!exists(x))bad.push(`missing ${x}`);
+const d=data();d.docs=enrich(d.docs||[],"content/docs");d.research=enrich(d.research||[],"content/research");d.skills=enrich(d.skills||[],"content/skills",true);
+const routes=["index.html","404.html","models/index.html","skills/index.html","docs/index.html","research/index.html","roadmap/index.html","changelog/index.html","about/index.html",...d.models.map(x=>`models/${x.name.toLowerCase().replaceAll(" ","-")}/index.html`),...d.skills.map(x=>`skills/${x.slug}/index.html`),...d.docs.map(x=>`docs/${x.slug}/index.html`),...d.research.map(x=>`research/${x.slug}/index.html`)];
+for(const r of routes)if(!exists(r))bad.push(`missing published route ${r}`);
+for(const f of walk(root)){const rel=path.relative(root,f).replaceAll(path.sep,"/");const t=fs.readFileSync(f,"utf8");if(!t.includes('id="app"'))bad.push(`missing app shell ${rel}`);if(!t.includes("styles.css"))bad.push(`missing css ${rel}`);if(!t.includes('type="application/ld+json"'))bad.push(`missing JSON-LD ${rel}`);}
+if(d.skills.length!==10)bad.push(`expected 10 skills, found ${d.skills.length}`);
+if(lintOnly){try{execFileSync(process.execPath,["--check",p("script.js")],{stdio:"pipe"});}catch(e){bad.push(`JavaScript syntax error: ${String(e.stderr||e.message).trim()}`);}const css=fs.readFileSync(p("styles.css"),"utf8");let depth=0,comment=false;for(let i=0;i<css.length;i++){const pair=css.slice(i,i+2);if(comment){if(pair==="*/"){comment=false;i++;}continue;}if(pair==="/*"){comment=true;i++;continue;}if(css[i]==="{")depth++;if(css[i]==="}")depth--;if(depth<0)bad.push("CSS unmatched closing brace");}if(comment)bad.push("CSS unterminated comment");if(depth!==0)bad.push("CSS unbalanced braces");if(/\{\s*\}/.test(css))bad.push("CSS empty rule");}
+if(bad.length){console.error(bad.join("\n"));process.exit(1);}
+if(!lintOnly)fs.writeFileSync(p("data.js"),`window.LAPIS_DATA=${JSON.stringify(d)};\n`);console.log(lintOnly?"Lapis website lint passed: JavaScript syntax, CSS structure, routes, and content sources.":`Lapis website build validated: ${walk(root).length} HTML pages; ${routes.length} published routes; ${d.skills.length} skill packages.`);
