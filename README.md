@@ -1,39 +1,87 @@
-# LAPIS
+# LapisLLM
 
-> A language model built from the ground up.
+A compact, end-to-end implementation of an LLM stack in Python: tokenizer, data pipeline, decoder-only Transformer, training loop, inference primitives, export tooling, and a minimal serving API. LapisLLM is built for reproducibility, auditability, and extensibility — suitable for research and production prototyping.
 
-LAPIS is an independent LLM research project focused on building the complete language-model stack: data, tokenization, Transformer architecture, training, evaluation, inference and distribution.
+Status
+- Active. Modular components with configuration-driven workflows and test coverage.
+- Goal: transparent implementations (no external model binaries), reproducible checkpoints, and ergonomic developer UX.
 
-## Project status
+Highlights
+- Tokenizer training and versioned tokenizer artifacts.
+- Data ingestion: cleaning, deduplication, packing, and manifest generation.
+- Decoder-only Transformer implemented in Python with KV cache support.
+- Training utilities: checkpointing (weights, optimizer, scheduler, RNG), logging, and evaluation.
+- Export: safetensors / GGUF exporters and lightweight serving API for local inference.
+- Config-first: all runs controlled by YAML configs under configs/.
 
-**Lapis 0.1 — Research / In development**
+Quickstart (development)
+1. Clone
+   git clone https://github.com/sudomarc/LapisLLM.git
+   cd LapisLLM
 
-The first milestone is a small, real Transformer model that can be trained, checkpointed, evaluated and used for generation. The architecture is intentionally designed to scale into a family of models over time.
+2. Environment
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -e .
 
-## Model family
+3. Configure
+   cp .env.example .env
+   edit .env and YAML configs in configs/ to suit your hardware and dataset.
 
-- Lapis Tiny — architecture and training validation
-- Lapis Small — planned
-- Lapis 1B — planned
-- Lapis 3B — planned
-- Lapis 7B+ — long-term
+4. Run tests
+   pytest -q
 
-## Stack
+Common commands
+- Train tokenizer
+  python scripts/train_tokenizer.py --config configs/tiny.yaml
 
-Python · PyTorch · safetensors · FastAPI · CUDA-ready
+- Prepare data (packing/manifests)
+  python scripts/prepare_data.py --config configs/development.yaml
 
-## Roadmap
+- Train model
+  python scripts/train.py --config configs/development.yaml
 
-Foundation → Pretraining → Post-training → Evaluation → Scaling → Local runtimes & API ecosystem
+- Evaluate
+  python scripts/evaluate.py --checkpoint checkpoints/latest --config configs/development.yaml
 
-## Website
+- Generate / chat
+  python scripts/generate.py --checkpoint checkpoints/latest --prompt "Hello"
+  python scripts/chat.py --checkpoint checkpoints/latest
 
-The repository contains the project landing page and documentation site. Enable GitHub Pages on the `main` branch using the repository root to publish it.
+- Serve (local API)
+  python scripts/serve.py --checkpoint checkpoints/latest --host 0.0.0.0 --port 8080
 
-## Philosophy
+Configuration
+- configs/ contains example YAMLs (development, tiny, small, base).
+- Model, training, and data parameters are configurable in src/lapis/config/.
+- Prefer small test configs for CI and rapid iteration.
 
-Build the machine to understand the machine. Measure capabilities from real experiments, keep the stack modular, and scale deliberately.
+Repository layout (high level)
+- src/lapis/
+  - tokenizer/: tokenizer implementation & training
+  - data/: downloaders, cleaners, dedupe, packers, manifests
+  - model/: transformer blocks and model wrapper
+  - training/: trainer, optimizers, schedulers, checkpointing
+  - inference/: sampling, generation, KV cache, chat primitives
+  - export/: safetensors / GGUF exporters
+  - api/: serving app and streaming utilities
+- scripts/: CLI entrypoints (train, evaluate, generate, serve)
+- configs/: example run configs
+- docs/: design and operational documentation
+- tests/: unit and integration tests
 
-## License
+Checkpoints & artifacts
+- Checkpoints must include model weights, optimizer & scheduler state, global step, RNG state, and tokenizer reference.
+- Use safetensors where supported.
 
-See [LICENSE](./LICENSE).
+Contribution
+- Read docs/ and AGENTS.md for architecture rules and conventions.
+- Keep changes focused, documented, and covered by tests.
+- Open issues and PRs with a concise description, rationale, and reproduction steps.
+
+Security & licensing
+- Do not add datasets with unclear licensing. See LICENSE for repo license.
+
+Contact
+- Repository: https://github.com/sudomarc/LapisLLM
+- Maintainer: sudomarc
