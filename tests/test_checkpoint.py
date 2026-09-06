@@ -66,6 +66,15 @@ def checkpoint_config(model):
     }
 
 
+def train_one_batch(model, optimizer, scheduler, input_ids, labels):
+    optimizer.zero_grad(set_to_none=True)
+    _, loss = model(input_ids, labels=labels)
+    assert loss is not None and torch.isfinite(loss)
+    loss.backward()
+    optimizer.step()
+    scheduler.step()
+
+
 def test_checkpoint_is_self_contained_and_round_trips(tmp_path: Path):
     tokenizer, model, optimizer, scheduler = make_components()
     input_ids = torch.tensor([tokenizer.encode("hello world")])
@@ -157,6 +166,71 @@ def test_epoch_loader_order_is_stable_for_resume_cursor():
     different_epoch = [index for batch in make_epoch_loader(dataset, 2, seed=42, epoch=4) for index in batch]
     assert first == second
     assert first != different_epoch
+
+
+def test_checkpoint_resume_matches_continuous_training(tmp_path: Path):
+    seed = 77
+    tokenizer, reference_model, reference_optimizer, reference_scheduler = make_components()
+    torch.manual_seed(seed)
+    reference_model = LapisModel(
+        vocab_size=tokenizer.vocab_size, hidden_size=16, intermediate_size=32,
+        num_layers=1, num_attention_heads=4, num_key_value_heads=2,
+        max_position_embeddings=16, rope_theta=10000.0, dropout=0.0, bias=True,
+    )
+    reference_optimizer = torch.optim.AdamW(reference_model.parameters(), lr=1e-3)
+    reference_scheduler = build_scheduler(
+        reference_optimizer,
+        type("TrainingConfigProxy", (), {"warmup_steps": 0, "max_steps": 4})(),
+    )
+    dataset = [(torch.tensor([1, 2, 3, 4]), torch.tensor([1, 2, 3, 4])) for _ in range(4)]
+    loader = make_epoch_loader(dataset, 1, seed=seed, epoch=0)
+    batches = list(loader)
+
+    torch.manual_seed(seed)
+    interrupted_model = LapisModel(
+        vocab_size=tokenizer.vocab_size, hidden_size=16, intermediate_size=32,
+        num_layers=1, num_attention_heads=4, num_key_value_heads=2,
+        max_position_embeddings=16, rope_theta=10000.0, dropout=0.0, bias=True,
+    )
+    interrupted_optimizer = torch.optim.AdamW(interrupted_model.parameters(), lr=1e-3)
+    interrupted_scheduler = build_scheduler(
+        interrupted_optimizer,
+        type("TrainingConfigProxy", (), {"warmup_steps": 0, "max_steps": 4})(),
+    )
+
+    train_one_batch(reference_model, reference_optimizer, reference_scheduler, *batches[0])
+    train_one_batch(reference_model, reference_optimizer, reference_scheduler, *batches[1])
+
+    train_one_batch(interrupted_model, interrupted_optimizer, interrupted_scheduler, *batches[0])
+    checkpoint_path = tmp_path / "resume.pt"
+    save_checkpoint(
+        checkpoint_path,
+        model=interrupted_model,
+        optimizer=interrupted_optimizer,
+        scheduler=interrupted_scheduler,
+        step=1,
+        epoch=0,
+        batch_in_epoch=1,
+        seed=seed,
+        config=checkpoint_config(interrupted_model),
+        tokenizer=tokenizer,
+        data_fingerprint="data",
+    )
+
+    _, resumed_model, resumed_optimizer, resumed_scheduler = make_components()
+    checkpoint = load_checkpoint(checkpoint_path)
+    resumed_model.load_state_dict(checkpoint["model_state_dict"])
+    resumed_optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    resumed_scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    restore_rng_state(checkpoint)
+    resume_loader = make_epoch_loader(dataset, 1, seed=seed, epoch=0)
+    resume_batches = list(resume_loader)
+    train_one_batch(resumed_model, resumed_optimizer, resumed_scheduler, *resume_batches[1])
+
+    for name, reference in reference_model.state_dict().items():
+        assert torch.equal(reference, resumed_model.state_dict()[name]), name
+    assert reference_scheduler.state_dict() == resumed_scheduler.state_dict()
+    assert reference_optimizer.state_dict()["param_groups"] == resumed_optimizer.state_dict()["param_groups"]
 
 
 def test_resume_rejects_explicit_tokenizer_override():
