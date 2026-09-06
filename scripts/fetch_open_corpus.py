@@ -28,8 +28,10 @@ from typing import Any
 
 LOGGER = logging.getLogger("lapis.fetch_open_corpus")
 
-# Broad mixture: general web, education, knowledge, science, mathematics,
-# code, and assistant conversations/reasoning. All are streamed and bounded.
+# Broad mixture: general web, education, books, knowledge, science,
+# mathematics, code, and assistant conversations/reasoning. All are streamed
+# and bounded. These are open/public datasets; they are not Claude's private
+# training data, which is not publicly disclosed by Anthropic.
 SOURCES: dict[str, dict[str, Any]] = {
     "fineweb": {"dataset": "HuggingFaceFW/fineweb", "config": "sample-10BT", "split": "train", "field": "text"},
     "fineweb_edu": {"dataset": "HuggingFaceFW/fineweb-edu", "config": "sample-10BT", "split": "train", "field": "text"},
@@ -37,6 +39,7 @@ SOURCES: dict[str, dict[str, Any]] = {
     "wikipedia": {"dataset": "wikimedia/wikipedia", "config": "20231101.en", "split": "train", "field": "text"},
     "s2orc_arxiv": {"dataset": "AlgorithmicResearchGroup/s2orc_arxiv", "config": None, "split": "train", "field": "text"},
     "cosmopedia": {"dataset": "HuggingFaceTB/cosmopedia", "config": "web_samples_v1", "split": "train", "field": "text"},
+    "gutenberg": {"dataset": "common-pile/project_gutenberg_filtered", "config": "default", "split": "train", "field": "text"},
     "openr1_math": {"dataset": "open-r1/OpenR1-Math-220k", "config": "default", "split": "train", "field": "messages"},
     "math": {"dataset": "open-web-math/open-web-math", "config": "default", "split": "train", "field": "text"},
     "oasst1": {"dataset": "OpenAssistant/oasst1", "config": None, "split": "train", "field": "text"},
@@ -47,12 +50,12 @@ SOURCES: dict[str, dict[str, Any]] = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect a bounded open Lapis training corpus")
     parser.add_argument("--sources", nargs="+", choices=sorted(SOURCES), default=[
-        "fineweb_edu", "c4", "wikipedia", "s2orc_arxiv", "cosmopedia",
-        "openr1_math", "oasst1", "math", "code",
+        "fineweb", "fineweb_edu", "c4", "wikipedia", "s2orc_arxiv",
+        "cosmopedia", "gutenberg", "openr1_math", "oasst1", "math", "code",
     ])
     parser.add_argument("--output-dir", default="training_data/open")
     parser.add_argument("--max-chars", type=int, default=50_000_000, help="Global character budget")
-    parser.add_argument("--max-chars-per-source", type=int, default=6_000_000)
+    parser.add_argument("--max-chars-per-source", type=int, default=4_500_000)
     parser.add_argument("--max-examples", type=int, default=100_000)
     parser.add_argument("--max-examples-per-source", type=int, default=25_000)
     parser.add_argument("--min-chars", type=int, default=80)
