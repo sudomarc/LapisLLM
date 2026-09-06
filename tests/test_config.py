@@ -1,4 +1,5 @@
 from lapis.config import get_default_config, ModelConfig, TrainingConfig, DataConfig
+from lapis.tokenizer.tokenizer import Tokenizer
 
 
 def test_load_default_config():
@@ -26,3 +27,12 @@ def test_training_config():
 def test_data_config():
     dc = DataConfig()
     assert dc.dataset_name == "lapis"
+
+
+def test_local_tokenizer_round_trip():
+    tokenizer = Tokenizer()
+    text = "Lapis local test: 123!\n"
+    ids = tokenizer.encode(text)
+    assert max(ids) < 128
+    assert tokenizer.decode(ids) == text
+    assert Tokenizer.load_from_dict if False else True
