@@ -1,107 +1,60 @@
 # Changelog
 
+All notable changes to LapisLLM are documented here.
+
 ## [0.1.1] - 2026-09-06
 
 ### Added
-- Transformer correctness tests (forward, backward, parameter count validation)
-- GQA validation tests
-- RoPE validation tests
-- Causal attention tests
-- Tokenizer round-trip tests
-- Dataset target alignment tests
-- Checkpoint RNG state persistence
-- Linear warmup followed by cosine decay schedule
+
+- Transformer correctness tests covering forward/backward passes, parameter counts, GQA shapes, RoPE behavior, causality, and loss masking.
+- ByteLevel BPE tokenizer round-trip tests.
+- Dataset target-alignment and padding-mask tests.
+- Checkpoint persistence for model, optimizer, scheduler, epoch, configuration, tokenizer, and RNG state.
+- Linear warmup followed by cosine decay scheduling.
+- A correctness-focused development configuration in `configs/tiny.yaml`.
 
 ### Fixed
-- Corrected double causal target shifting bug
-- Fixed padded target positions ignored during loss computation (now use -100 masking)
-- Propagated model bias configuration into the SwiGLU MLP
-- Aligned tests with current BPE tokenizer implementation
-- Added missing imports and type hints
-- Fixed blind exception handling in data cleaner (catch specific exceptions)
 
-### Validation
-- Added automated coverage for core model and training-data invariants.
-- CI tests validate architecture correctness, not performance.
+- Corrected the double causal target shift between the dataset and model loss.
+- Padding target positions are now ignored with `-100` during cross-entropy.
+- Propagated the model `bias` setting into the SwiGLU MLP.
+- Normalized partial gradient-accumulation groups so their update scale does not depend on the number of batches in an epoch.
+- Updated stale tests to match the current tokenizer and data configuration.
+- Replaced broad exception handling in the data cleaner with specific exceptions.
 
-### Not Included
-- KV cache inference optimization
-- Distributed training (DDP)
-- Mixed precision training
-- Large-scale training experiments
-- Model export formats (GGUF, safetensors)
-- Inference server deployment
-- Reproducible large-dataset training
+### Documentation
+
+- Reworked the README into a model/project overview with explicit architecture, status, limitations, validation philosophy, and roadmap sections.
+- Removed unsupported claims about large-scale training, GGUF export, KV-cache maturity, and production readiness.
+
+### Validation status
+
+CI covers automated correctness and lint checks. The release does **not** claim benchmark quality or general-purpose language capability. The next milestone is validation through tiny-dataset overfitting, held-out loss/perplexity, deterministic checkpoint tests, and generation regression tests.
+
+### Not yet implemented
+
+- Exact mid-epoch data-loader/sampler replay.
+- Mixed-precision training.
+- Distributed training.
+- Efficient KV-cache generation.
+- Large-scale pretraining.
+- Comprehensive benchmark evaluation.
+- Production-grade web-scale data processing.
 
 ---
 
 ## [0.1.0] - 2026-09-06
 
-### 🚀 Initial Release: LapisLLM Stack
+### Initial development release
 
-#### Core Components
-- **Tokenizer**: Training and versioned tokenizer artifacts for efficient text encoding
-- **Data Pipeline**: End-to-end data processing including cleaning, deduplication, packing, and manifest generation
-- **Transformer Model**: Decoder-only architecture implemented in pure Python with KV cache support for efficient inference
-- **Training Framework**: Complete training loop with checkpointing (weights, optimizer state, scheduler, RNG), logging, and evaluation utilities
-- **Export Tools**: Multi-format export support (safetensors, GGUF) for model portability
-- **Inference Engine**: Sampling, generation, and chat primitives with KV cache optimization
-- **Serving API**: Lightweight local serving API with streaming support for inference
-
-#### Features
-- ✅ Configuration-driven workflows (YAML configs for all runs)
-- ✅ Transparent implementations (no external model binaries)
-- ✅ Reproducible checkpoints with full state preservation
-- ✅ Test coverage for core components
-- ✅ Modular architecture with clear separation of concerns
-- ✅ Ergonomic developer UX with CLI entrypoints
-
-#### Project Status
-- **Active development** with modular, well-documented codebase
-- Designed for educational purposes and custom LLM implementations
-- Ready for development and experimentation
-
-#### Getting Started
-```bash
-git clone https://github.com/sudomarc/LapisLLM.git
-cd LapisLLM
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-pytest -q
-```
-
-#### Quick Commands
-- Train tokenizer: `python scripts/train_tokenizer.py --config configs/tiny.yaml`
-- Prepare data: `python scripts/prepare_data.py --config configs/development.yaml`
-- Train model: `python scripts/train.py --config configs/development.yaml`
-- Evaluate: `python scripts/evaluate.py --checkpoint checkpoints/latest`
-- Generate: `python scripts/generate.py --checkpoint checkpoints/latest --prompt "Hello"`
-- Chat: `python scripts/chat.py --checkpoint checkpoints/latest`
-- Serve: `python scripts/serve.py --checkpoint checkpoints/latest --host 0.0.0.0 --port 8080`
-
-#### Repository Structure
-- `src/lapis/tokenizer/` - Tokenization implementation
-- `src/lapis/data/` - Data processing pipeline
-- `src/lapis/model/` - Transformer architecture
-- `src/lapis/training/` - Training utilities and checkpointing
-- `src/lapis/inference/` - Generation and inference primitives
-- `src/lapis/export/` - Model export tools
-- `src/lapis/api/` - Serving application
-- `scripts/` - CLI entrypoints
-- `configs/` - Example configurations
-- `docs/` - Architecture and design documentation
-- `tests/` - Unit and integration tests
-
-#### License
-MIT License - see LICENSE file for details
-
-#### Contributing
-- Read `docs/` and `AGENTS.md` for architecture guidelines
-- Keep changes focused, documented, and tested
-- Report issues with clear reproduction steps
+- Initial LapisLLM repository structure.
+- Decoder-only Transformer implementation.
+- Configurable YAML model and training configurations.
+- Tokenizer training and persistence.
+- Data cleaning, filtering, packing, and manifest utilities.
+- Training, evaluation, generation, chat, and local serving entry points.
+- Initial test and CI infrastructure.
 
 ---
 
-**Maintainer**: [@sudomarc](https://github.com/sudomarc)
-**Repository**: https://github.com/sudomarc/LapisLLM
+For the current state of the project, see [`README.md`](README.md).
