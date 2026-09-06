@@ -35,6 +35,9 @@ generate = "scripts.generate:main"
 chat = "scripts.chat:main"
 serve = "scripts.serve:main"
 
+[tool.poetry]
+include = [{ path = "configs/*.yaml", format = "wheel" }]
+
 [tool.pytest]
 addopts = []
 
