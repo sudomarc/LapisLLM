@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 import torch
@@ -35,7 +36,9 @@ def load_model(checkpoint_path: str, device: torch.device) -> tuple[LapisModel, 
         model = LapisModel(**config["model"]).to(device)
         model.load_state_dict(checkpoint["model_state_dict"])
     except (RuntimeError, TypeError, ValueError) as exc:
-        raise CheckpointError("Checkpoint model state is incompatible with its model configuration") from exc
+        raise CheckpointError(
+            "Checkpoint model state is incompatible with its model configuration"
+        ) from exc
     model.eval()
     return model, checkpoint
 
@@ -52,9 +55,17 @@ def load_tokenizer(checkpoint_path: str, checkpoint: dict) -> Tokenizer:
     return tokenizer
 
 
-def sample_next_token(logits: torch.Tensor, temperature: float, top_k: int, top_p: float) -> torch.Tensor:
+def sample_next_token(
+    logits: torch.Tensor, temperature: float, top_k: int, top_p: float
+) -> torch.Tensor:
     if not torch.isfinite(logits).all():
         raise RuntimeError("Model produced non-finite generation logits")
+    if not math.isfinite(temperature) or temperature < 0:
+        raise ValueError("temperature must be finite and non-negative")
+    if top_k < 0:
+        raise ValueError("top_k must be non-negative")
+    if not math.isfinite(top_p) or not 0.0 < top_p <= 1.0:
+        raise ValueError("top_p must be finite, greater than 0, and at most 1")
     if temperature == 0.0:
         return torch.argmax(logits, dim=-1, keepdim=True)
 
@@ -94,12 +105,12 @@ def generate(
 ) -> str:
     if max_new_tokens < 0:
         raise ValueError("max_new_tokens must be non-negative")
-    if temperature < 0:
-        raise ValueError("temperature must be non-negative")
+    if not math.isfinite(temperature) or temperature < 0:
+        raise ValueError("temperature must be finite and non-negative")
     if top_k < 0:
         raise ValueError("top_k must be non-negative")
-    if not 0.0 < top_p <= 1.0:
-        raise ValueError("top_p must be greater than 0 and at most 1")
+    if not math.isfinite(top_p) or not 0.0 < top_p <= 1.0:
+        raise ValueError("top_p must be finite, greater than 0, and at most 1")
     if not isinstance(prompt, str):
         raise TypeError("prompt must be a string")
 
@@ -132,6 +143,15 @@ def main() -> None:
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
+
+    if args.max_new_tokens < 0:
+        parser.error("--max-new-tokens must be non-negative")
+    if not math.isfinite(args.temperature) or args.temperature < 0:
+        parser.error("--temperature must be finite and non-negative")
+    if args.top_k < 0:
+        parser.error("--top-k must be non-negative")
+    if not math.isfinite(args.top_p) or not 0.0 < args.top_p <= 1.0:
+        parser.error("--top-p must be finite, greater than 0, and at most 1")
 
     device = resolve_device(args.device)
     model, checkpoint = load_model(args.checkpoint, device)
