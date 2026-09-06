@@ -1,6 +1,41 @@
 # Changelog
 
-## [v0.1.0] - 2026-09-06
+## [0.1.1] - 2026-09-06
+
+### Added
+- Transformer correctness tests (forward, backward, parameter count validation)
+- GQA validation tests
+- RoPE validation tests
+- Causal attention tests
+- Tokenizer round-trip tests
+- Dataset target alignment tests
+- Checkpoint RNG state persistence
+- Linear warmup followed by cosine decay schedule
+
+### Fixed
+- Corrected double causal target shifting bug
+- Fixed padded target positions ignored during loss computation (now use -100 masking)
+- Propagated model bias configuration into the SwiGLU MLP
+- Aligned tests with current BPE tokenizer implementation
+- Added missing imports and type hints
+- Fixed blind exception handling in data cleaner (catch specific exceptions)
+
+### Validation
+- Added automated coverage for core model and training-data invariants.
+- CI tests validate architecture correctness, not performance.
+
+### Not Included
+- KV cache inference optimization
+- Distributed training (DDP)
+- Mixed precision training
+- Large-scale training experiments
+- Model export formats (GGUF, safetensors)
+- Inference server deployment
+- Reproducible large-dataset training
+
+---
+
+## [0.1.0] - 2026-09-06
 
 ### 🚀 Initial Release: LapisLLM Stack
 
