@@ -1,0 +1,44 @@
+# Lapis CPU Fast: optimized for practical CPU-only training iterations.
+# This is a separate small architecture, not a replacement for the GPU config.
+# It is intentionally incompatible with --resume from another architecture.
+
+model:
+  vocab_size: 4096
+  hidden_size: 128
+  intermediate_size: 512
+  num_layers: 2
+  num_attention_heads: 4
+  num_key_value_heads: 2
+  max_position_embeddings: 128
+  rope_theta: 10000.0
+  dropout: 0.0
+  bias: true
+
+tokenizer:
+  path: artifacts/tokenizer
+  vocab_size: 4096
+  min_frequency: 2
+
+training:
+  learning_rate: 3e-4
+  weight_decay: 0.1
+  warmup_steps: 20
+  max_steps: 500
+  batch_size: 4
+  micro_batch_size: 1
+  gradient_accumulation_steps: 4
+  gradient_clip: 1.0
+
+runtime:
+  dtype: float32
+  device: cpu
+  compile: false
+  matmul_precision: high
+  cpu:
+    threads: 0
+    interop_threads: 0
+    dataloader_workers: 0
+    pin_memory: false
+
+data:
+  max_seq_length: 127
