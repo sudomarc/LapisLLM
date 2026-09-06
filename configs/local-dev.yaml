@@ -1,0 +1,33 @@
+# Lapis Local Dev: intentionally tiny CPU-friendly configuration.
+# This configuration validates the complete training/inference pipeline,
+# not model quality or language capability.
+
+model:
+  vocab_size: 128
+  hidden_size: 96
+  intermediate_size: 256
+  num_layers: 2
+  num_attention_heads: 4
+  num_key_value_heads: 2
+  max_position_embeddings: 64
+  rope_theta: 10000.0
+  dropout: 0.0
+  bias: true
+
+training:
+  learning_rate: 0.001
+  weight_decay: 0.01
+  warmup_steps: 0
+  max_steps: 100
+  batch_size: 4
+  micro_batch_size: 1
+  gradient_accumulation_steps: 4
+  gradient_clip: 1.0
+
+runtime:
+  dtype: float32
+  device: cpu
+  compile: false
+
+data:
+  max_seq_length: 64
