@@ -1,107 +1,138 @@
-"""Training script for LAPIS model.
+#!/usr/bin/env python3
+"""Train a Lapis model from a YAML configuration."""
 
-Usage:
-    python scripts/train.py --config configs/tiny.yaml
-    python scripts/train.py --config configs/tiny.yaml --resume checkpoints/latest
-"""
+from __future__ import annotations
 
 import argparse
-import os
-import json
-import time
 import math
+import random
+from pathlib import Path
 
 import torch
-import torch.nn as nn
+import yaml
 from torch.utils.data import DataLoader, Dataset
 
-from lapis.config import get_default_config, ModelConfig, TrainingConfig, DataConfig
+from lapis.config.model_config import ModelConfig
+from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
-from lapis.logging import TrainingLogger
+from lapis.tokenizer.tokenizer import Tokenizer
+
+DEFAULT_CORPUS = """
+LAPIS is an independent language model research project.
+We build the tokenizer, transformer, training loop, evaluation pipeline and inference stack ourselves.
+A language model learns to predict the next token from context.
+The purpose of this tiny training run is to validate the complete learning pipeline.
+This corpus is intentionally small and repetitive for local smoke training.
+""".strip()
 
 
-class SimpleDataset(Dataset):
-    """Simple dataset for training - loads text and tokenizes it."""
-    
-    def __init__(self, text, tokenizer, max_length=512):
-        self.text = text
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.tokens = tokenizer.encode(text)
-    
-    def __len__(self):
-        return max(1, len(self.tokens) // self.max_length)
-    
-    def __getitem__(self, idx):
-        # Return a chunk of tokens
-        start = idx * self.max_length
-        end = start + self.max_length
-        chunk = self.tokens[start:end]
-        
-        # Pad if short
-        if len(chunk) < self.max_length:
-            chunk = chunk + [self.tokenizer.pad_id] * (self.max_length - len(chunk))
-        
-        input_ids = torch.tensor(chunk, dtype=torch.long)
-        # For causal LM, the target is the same input shifted by 1
-        return input_ids, input_ids
+class TextDataset(Dataset):
+    """Fixed-length causal language-modeling examples."""
+
+    def __init__(self, tokens: list[int], seq_len: int, pad_id: int):
+        if seq_len < 2:
+            raise ValueError("seq_len must be at least 2")
+        self.seq_len = seq_len
+        self.pad_id = pad_id
+        needed = seq_len + 1
+        self.samples: list[torch.Tensor] = []
+        for start in range(0, max(0, len(tokens) - 1), seq_len):
+            chunk = tokens[start : start + needed]
+            if len(chunk) < needed:
+                chunk += [pad_id] * (needed - len(chunk))
+            self.samples.append(torch.tensor(chunk[:needed], dtype=torch.long))
+        if not self.samples:
+            self.samples.append(torch.full((needed,), pad_id, dtype=torch.long))
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int):
+        sample = self.samples[index]
+        return sample[:-1], sample[1:]
 
 
-def train_one_epoch(model, dataloader, optimizer, scheduler, logger, device, step):
-    """Train for one epoch."""
-    model.train()
-    total_loss = 0
-    num_batches = 0
-    
-    for batch_idx, (input_ids, labels) in enumerate(dataloader):
-        input_ids = input_ids.to(device)
-        labels = labels.to(device)
-        
-        # Forward
-        logits, loss = model(input_ids, labels=labels)
-        
-        # Backward
-        optimizer.zero_grad()
-        loss.backward()
-        
-        # Gradient clipping
-        if hasattr(torch.nn.utils, "clip_grad_norm_"):
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        
-        optimizer.step()
-        if scheduler is not None:
-            scheduler.step()
-        
-        step += 1
-        total_loss += loss.item()
-        num_batches += 1
-        
-        # Log step
-        if step % 10 == 0:
-            logger.log_step(step, loss.item(), scheduler.get_last_lr()[0] if scheduler else optimizer.param_groups[0]["lr"])
-    
-    avg_loss = total_loss / max(num_batches, 1)
-    return step, avg_loss
+def load_yaml(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="LAPIS Training")
-    parser.add_argument("--config", type=str, default="configs/tiny.yaml", help="Path to config YAML")
-    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
-    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
-    parser.add_argument("--device", type=str, default=None, help="Device (cuda/cpu)")
+def resolve_device(config: dict, requested: str | None) -> torch.device:
+    value = requested or config.get("runtime", {}).get("device", "auto")
+    if value == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if value.startswith("cuda") and not torch.cuda.is_available():
+        print("CUDA requested but unavailable; falling back to CPU.")
+        return torch.device("cpu")
+    return torch.device(value)
+
+
+def resolve_dtype(config: dict, device: torch.device) -> torch.dtype:
+    requested = config.get("runtime", {}).get("dtype", "float32").lower()
+    mapping = {"float32": torch.float32, "fp32": torch.float32,
+               "float16": torch.float16, "fp16": torch.float16,
+               "bfloat16": torch.bfloat16, "bf16": torch.bfloat16}
+    dtype = mapping.get(requested, torch.float32)
+    if device.type == "cpu" and dtype in (torch.float16, torch.bfloat16):
+        return torch.float32
+    return dtype
+
+
+def save_checkpoint(path: Path, model, optimizer, scheduler, step, config, tokenizer):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+            "step": step,
+            "config": config,
+        },
+        path,
+    )
+    tokenizer_dir = path.parent / "tokenizer"
+    tokenizer.save(str(tokenizer_dir))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train LAPIS")
+    parser.add_argument("--config", default="configs/tiny.yaml")
+    parser.add_argument("--resume", default=None)
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--data", default=None, help="Optional UTF-8 text file")
     args = parser.parse_args()
-    
-    # Load config
-    config = get_default_config() if args.config is None else ...  # load config
-    
-    # Setup device
-    device = args.device or config["runtime"]["device"]
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # Setup model
+
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    config = load_yaml(args.config)
     model_config = ModelConfig(config)
+    training_config = TrainingConfig(config)
+    device = resolve_device(config, args.device)
+    dtype = resolve_dtype(config, device)
+    seq_len = min(
+        model_config.max_position_embeddings,
+        int(config.get("data", {}).get("max_seq_length", model_config.max_position_embeddings)),
+    )
+
+    tokenizer = Tokenizer()
+    corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
+    tokens = tokenizer.encode(corpus, add_special_tokens=True)
+    if max(tokens, default=0) >= model_config.vocab_size:
+        raise ValueError(
+            f"Tokenizer produced id {max(tokens)} but model vocab_size is {model_config.vocab_size}"
+        )
+
+    dataset = TextDataset(tokens, seq_len=seq_len, pad_id=tokenizer.pad_id)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=training_config.micro_batch_size,
+        shuffle=True,
+        drop_last=False,
+    )
+
     model = LapisModel(
         vocab_size=model_config.vocab_size,
         hidden_size=model_config.hidden_size,
@@ -113,58 +144,73 @@ def main():
         rope_theta=model_config.rope_theta,
         dropout=model_config.dropout,
         bias=model_config.bias,
-    ).to(device)
-    
-    # Count parameters
-    params = model_config.count_parameters()
+    ).to(device=device, dtype=dtype)
+
+    breakdown = model.parameter_breakdown()
     print(f"Model: Lapis Tiny")
-    print(f"Parameters: {params['total']:,} total ({params['trainable']:,} trainable, {params['non_trainable']:,} non-trainable)")
-    print(f"Embedding: {params['embedding']:,}")
-    print(f"Attention: {params['attention']:,}")
-    print(f"MLP: {params['mlp']:,}")
-    print(f"Norm: {params['norm']:,}")
-    print(f"LM Head: {params['lm_head']:,}")
-    print()
-    
-    # Setup optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
-    
-    # Setup scheduler
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
-    
-    # Setup logger
-    logger = TrainingLogger(config)
-    logger.start_run()
-    
-    # Setup dataset (simple example)
-    # In a real scenario, load from data/
-    train_text = "Hello world this is a test of the LAPIS training pipeline. "
-    dataset = SimpleDataset(train_text, tokenizer=None, max_length=32)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-    
-    # Training loop
-    step = 0
-    best_loss = float('inf')
-    
-    for epoch in range(args.epochs):
-        print(f"Epoch {epoch + 1}/{args.epochs}")
-        step, avg_loss = train_one_epoch(model, dataloader, optimizer, scheduler, logger, device, step)
-        
-        # Log epoch end
-        ppl = math.exp(avg_loss) if avg_loss < 100 else float('inf')
-        logger.log_end(step, avg_loss, optimizer.param_groups[0]["lr"])
-        print(f"Epoch {epoch + 1}: Average Loss {avg_loss:.4f} | Perplexity {ppl:.2f}")
-    
-    # Save checkpoint
-    os.makedirs("checkpoints", exist_ok=True)
-    checkpoint = {
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "step": step,
-        "config": config,
-    }
-    torch.save(checkpoint, "checkpoints/latest")
-    print(f"Checkpoint saved to checkpoints/latest")
+    print(f"Device: {device} | dtype: {dtype}")
+    print(f"Parameters: {breakdown['total']:,}")
+    print(f"Dataset samples: {len(dataset)} | sequence length: {seq_len}")
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=training_config.learning_rate,
+        weight_decay=training_config.weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(1, training_config.max_steps)
+    )
+
+    start_step = 0
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        if "optimizer_state_dict" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if checkpoint.get("scheduler_state_dict"):
+            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        start_step = int(checkpoint.get("step", 0))
+        print(f"Resumed from step {start_step}")
+
+    model.train()
+    step = start_step
+    optimizer.zero_grad(set_to_none=True)
+    running_loss = 0.0
+
+    for _epoch in range(args.epochs):
+        for input_ids, labels in dataloader:
+            if step >= training_config.max_steps:
+                break
+            input_ids = input_ids.to(device)
+            labels = labels.to(device)
+            _, loss = model(input_ids, labels=labels)
+            if loss is None or not torch.isfinite(loss):
+                raise RuntimeError("Training produced a non-finite loss")
+
+            (loss / training_config.gradient_accumulation_steps).backward()
+            running_loss += loss.item()
+
+            if (step + 1) % training_config.gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.gradient_clip)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
+
+            step += 1
+            if step % 10 == 0:
+                avg_loss = running_loss / min(10, step - start_step)
+                ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
+                lr = optimizer.param_groups[0]["lr"]
+                print(f"step={step:04d} loss={avg_loss:.4f} ppl={ppl:.2f} lr={lr:.6g}")
+                running_loss = 0.0
+
+        if step >= training_config.max_steps:
+            break
+
+    checkpoint_path = Path("checkpoints/latest.pt")
+    save_checkpoint(checkpoint_path, model, optimizer, scheduler, step, config, tokenizer)
+    print(f"Checkpoint saved: {checkpoint_path}")
+    print(f"Tokenizer saved: {checkpoint_path.parent / 'tokenizer'}")
 
 
 if __name__ == "__main__":
