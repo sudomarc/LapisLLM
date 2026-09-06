@@ -28,29 +28,40 @@ The checkpoint can then be loaded by the generation and chat interfaces.
 
 
 class TextDataset(Dataset):
-    """Fixed-length causal language-modeling examples."""
+    """Fixed-length causal language-modeling examples.
+
+    The model owns the causal shift. Labels therefore have the same shape as
+    input_ids, and padded target positions are ignored with -100.
+    """
 
     def __init__(self, tokens: list[int], seq_len: int, pad_id: int):
         if seq_len < 2:
             raise ValueError("seq_len must be at least 2")
         needed = seq_len + 1
-        self.samples: list[torch.Tensor] = []
+        self.samples: list[tuple[torch.Tensor, torch.Tensor]] = []
         for start in range(0, max(1, len(tokens) - 1), seq_len):
             chunk = tokens[start : start + needed]
-            if len(chunk) < needed:
-                chunk += [pad_id] * (needed - len(chunk))
-            self.samples.append(torch.tensor(chunk[:needed], dtype=torch.long))
+            real_length = len(chunk)
+            if real_length < needed:
+                chunk += [pad_id] * (needed - real_length)
+            sample = torch.tensor(chunk[:needed], dtype=torch.long)
+            labels = sample.clone()
+            if real_length < needed:
+                labels[real_length:] = -100
+            self.samples.append((sample, labels))
         if not self.samples:
-            self.samples.append(torch.full((needed,), pad_id, dtype=torch.long))
+            self.samples.append(
+                (
+                    torch.full((needed,), pad_id, dtype=torch.long),
+                    torch.full((needed,), -100, dtype=torch.long),
+                )
+            )
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, index: int):
-        sample = self.samples[index]
-        inputs = sample[:-1]
-        labels = sample[1:].clone()
-        return inputs, labels
+        return self.samples[index]
 
 
 def load_yaml(path: str) -> dict:
@@ -100,7 +111,7 @@ def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
     return tokenizer
 
 
-def save_checkpoint(path: Path, model, optimizer, scheduler, step, config, tokenizer):
+def save_checkpoint(path: Path, model, optimizer, scheduler, step, epoch, config, tokenizer):
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -108,12 +119,33 @@ def save_checkpoint(path: Path, model, optimizer, scheduler, step, config, token
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
             "step": step,
+            "epoch": epoch,
             "config": config,
             "tokenizer_version": tokenizer.VERSION,
+            "python_rng_state": random.getstate(),
+            "torch_rng_state": torch.get_rng_state(),
+            "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
         },
         path,
     )
     tokenizer.save(str(path.parent / "tokenizer"))
+
+
+def build_scheduler(optimizer, training_config):
+    """Build linear warmup followed by cosine decay."""
+    warmup_steps = int(training_config.warmup_steps)
+    total_steps = max(1, int(training_config.max_steps))
+
+    if warmup_steps <= 0:
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+
+    def lr_lambda(step: int) -> float:
+        if step < warmup_steps:
+            return max(1e-12, float(step + 1) / warmup_steps)
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * min(1.0, progress)))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def main() -> None:
@@ -132,12 +164,8 @@ def main() -> None:
 
     config = load_yaml(args.config)
     corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
-    if args.tokenizer:
-        tokenizer = Tokenizer.load(args.tokenizer)
-    else:
-        tokenizer = load_or_train_tokenizer(config, corpus)
+    tokenizer = Tokenizer.load(args.tokenizer) if args.tokenizer else load_or_train_tokenizer(config, corpus)
 
-    # The model vocabulary must match the trained tokenizer exactly.
     config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
     model_config = ModelConfig(config)
     training_config = TrainingConfig(config)
@@ -155,12 +183,7 @@ def main() -> None:
         )
 
     dataset = TextDataset(tokens, seq_len=seq_len, pad_id=tokenizer.pad_id)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=training_config.micro_batch_size,
-        shuffle=True,
-        drop_last=False,
-    )
+    dataloader = DataLoader(dataset, batch_size=training_config.micro_batch_size, shuffle=True, drop_last=False)
 
     model = LapisModel(
         vocab_size=model_config.vocab_size,
@@ -183,16 +206,11 @@ def main() -> None:
     print(f"Vocabulary: {tokenizer.vocab_size:,}")
     print(f"Dataset samples: {len(dataset)} | sequence length: {seq_len}")
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=training_config.learning_rate,
-        weight_decay=training_config.weight_decay,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, training_config.max_steps)
-    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=training_config.learning_rate, weight_decay=training_config.weight_decay)
+    scheduler = build_scheduler(optimizer, training_config)
 
     optimizer_step = 0
+    epoch = 0
     micro_steps = 0
     running_loss = 0.0
 
@@ -203,6 +221,13 @@ def main() -> None:
         if checkpoint.get("scheduler_state_dict"):
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         optimizer_step = int(checkpoint.get("step", 0))
+        epoch = int(checkpoint.get("epoch", 0))
+        if checkpoint.get("python_rng_state") is not None:
+            random.setstate(checkpoint["python_rng_state"])
+        if checkpoint.get("torch_rng_state") is not None:
+            torch.set_rng_state(checkpoint["torch_rng_state"])
+        if checkpoint.get("cuda_rng_state") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state"])
         print(f"Resumed from optimizer step {optimizer_step}")
 
     model.train()
@@ -210,10 +235,10 @@ def main() -> None:
 
     while optimizer_step < training_config.max_steps and args.epochs > 0:
         args.epochs -= 1
+        epoch += 1
         for input_ids, labels in dataloader:
             if optimizer_step >= training_config.max_steps:
                 break
-
             input_ids = input_ids.to(device)
             labels = labels.to(device)
             _, loss = model(input_ids, labels=labels)
@@ -247,7 +272,7 @@ def main() -> None:
                     running_loss = 0.0
 
     checkpoint_path = Path("checkpoints/latest.pt")
-    save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, config, tokenizer)
+    save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, epoch, config, tokenizer)
     print(f"Checkpoint saved: {checkpoint_path}")
     print(f"Tokenizer saved: {checkpoint_path.parent / 'tokenizer'}")
 
