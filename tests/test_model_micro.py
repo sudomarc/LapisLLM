@@ -61,6 +61,15 @@ def test_rope_preserves_vector_norm():
     assert torch.allclose(k.norm(dim=-1), k_rot.norm(dim=-1), atol=1e-5, rtol=1e-5)
 
 
+def test_model_dtype_cast_preserves_rope_behavior():
+    model = make_model()
+    model.float()
+    input_ids = torch.randint(0, model.vocab_size, (1, 8))
+    logits, loss = model(input_ids, labels=input_ids)
+    assert logits.shape == (1, 8, model.vocab_size)
+    assert loss is not None and torch.isfinite(loss)
+
+
 def test_causal_future_tokens_do_not_change_current_logits():
     torch.manual_seed(0)
     model = make_model()
