@@ -30,8 +30,9 @@ The checkpoint can then be loaded by the generation and chat interfaces.
 class TextDataset(Dataset):
     """Fixed-length causal language-modeling examples.
 
-    The model owns the causal shift. Labels therefore have the same shape as
-    input_ids, and padded target positions are ignored with -100.
+    ``seq_len`` is the number of input positions consumed by the model. The
+    dataset keeps one extra token so the model can perform the causal shift
+    internally and predict the final target in each sample.
     """
 
     def __init__(self, tokens: list[int], seq_len: int, pad_id: int):
@@ -148,6 +149,19 @@ def build_scheduler(optimizer, training_config):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
+def resolve_training_seq_len(model_config: ModelConfig, config: dict) -> int:
+    """Resolve a dataset sequence length that leaves room for the target token."""
+    configured = int(
+        config.get("data", {}).get(
+            "max_seq_length", model_config.max_position_embeddings - 1
+        )
+    )
+    max_input_length = model_config.max_position_embeddings - 1
+    if max_input_length < 2:
+        raise ValueError("max_position_embeddings must be at least 3")
+    return min(configured, max_input_length)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train LAPIS")
     parser.add_argument("--config", default="configs/local-dev.yaml")
@@ -171,10 +185,7 @@ def main() -> None:
     training_config = TrainingConfig(config)
     device = resolve_device(config, args.device)
     dtype = resolve_dtype(config, device)
-    seq_len = min(
-        model_config.max_position_embeddings,
-        int(config.get("data", {}).get("max_seq_length", model_config.max_position_embeddings)),
-    )
+    seq_len = resolve_training_seq_len(model_config, config)
 
     tokens = tokenizer.encode(corpus, add_special_tokens=True)
     if max(tokens, default=0) >= model_config.vocab_size:
