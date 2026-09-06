@@ -29,7 +29,6 @@ training:
 runtime:
   dtype: "float32"
   device: "auto"
-  compile: false
 
 data:
   dataset_name: "lapis-open-mixture"
