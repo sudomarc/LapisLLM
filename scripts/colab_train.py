@@ -4,16 +4,19 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 
 
-def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
-    print("\n$", " ".join(command), flush=True)
+def run(command: list[str], *, env: dict[str, str] | None = None, display_command: list[str] | None = None) -> None:
+    shown = display_command or command
+    print("\n$", " ".join(shown), flush=True)
     subprocess.run(command, check=True, env=env)
 
 
@@ -63,33 +66,46 @@ def main() -> None:
         print("\nTraining complete. GITHUB_TOKEN not set; skipping GitHub push.", flush=True)
         return
 
-    safe_env = os.environ.copy()
-    safe_env["GIT_ASKPASS"] = "true"
-    safe_env.pop("GITHUB_TOKEN", None)
+    push_manifest = os.environ.get("LAPIS_PUSH_MANIFEST", "0").lower() in {"1", "true", "yes"}
+    if not push_manifest:
+        print("\nLAPIS_PUSH_MANIFEST is not enabled; generated artifacts remain local.", flush=True)
+        return
 
-    push_checkpoint = os.environ.get("LAPIS_PUSH_CHECKPOINT", "0").lower() in {"1", "true", "yes"}
-    if not push_checkpoint:
-        print(
-            "\nLAPIS_PUSH_CHECKPOINT is not enabled; generated checkpoints remain local.",
-            flush=True,
+    askpass = Path(tempfile.mktemp(prefix="lapis-askpass-", suffix=".sh"))
+    askpass.write_text(
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  *Username*) printf '%s\\n' 'x-access-token' ;;\n"
+        "  *Password*) printf '%s\\n' \"$LAPIS_GITHUB_TOKEN\" ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    askpass.chmod(stat.S_IRWXU)
+    env = os.environ.copy()
+    env["GIT_ASKPASS"] = str(askpass)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["LAPIS_GITHUB_TOKEN"] = token
+
+    try:
+        run(["git", "config", "user.email", "actions@github.com"])
+        run(["git", "config", "user.name", "Lapis Colab Trainer"])
+        run(["git", "add", "training_data/open/manifest.json"])
+        status = subprocess.run(["git", "diff", "--cached", "--quiet"])
+        if status.returncode == 0:
+            print("\nNo metadata changes to commit.", flush=True)
+            return
+        run(["git", "commit", "-m", "data: update training manifest"])
+        run(
+            ["git", "-c", "credential.helper=", "push", "https://github.com/sudomarc/LapisLLM.git", "HEAD:main"],
+            env=env,
+            display_command=["git", "-c", "credential.helper=", "push", "https://github.com/sudomarc/LapisLLM.git", "HEAD:main"],
         )
-        return
-
-    remote = f"https://x-access-token:{token}@github.com/sudomarc/LapisLLM.git"
-    safe_env["GIT_ASKPASS"] = "echo"
-    run(["git", "config", "user.email", "actions@github.com"])
-    run(["git", "config", "user.name", "Lapis Colab Trainer"])
-    run(["git", "remote", "set-url", "origin", remote], env=safe_env)
-    run(["git", "add", "training_data/open/manifest.json"])
-
-    status = subprocess.run(["git", "diff", "--cached", "--quiet"])
-    if status.returncode == 0:
-        print("\nNo metadata changes to commit.", flush=True)
-        return
-
-    run(["git", "commit", "-m", "data: update training manifest"])
-    run(["git", "push", "origin", "main"], env=safe_env)
-    print("\nLAPIS Colab metadata sync complete.", flush=True)
+    finally:
+        env.pop("LAPIS_GITHUB_TOKEN", None)
+        try:
+            askpass.unlink()
+        except FileNotFoundError:
+            pass
 
 
 if __name__ == "__main__":
