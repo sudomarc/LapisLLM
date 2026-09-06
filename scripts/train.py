@@ -22,7 +22,7 @@ LAPIS is an independent language model research project.
 We build the tokenizer, transformer, training loop, evaluation pipeline and inference stack ourselves.
 A language model learns to predict the next token from context.
 This tiny local run validates the complete learning pipeline on CPU.
-LAPIS learns from examples by repeatedly predicting the next character.
+LAPIS learns from examples by repeatedly predicting the next token.
 The checkpoint can then be loaded by the generation and chat interfaces.
 """.strip()
 
@@ -40,6 +40,8 @@ class TextDataset(Dataset):
             if len(chunk) < needed:
                 chunk += [pad_id] * (needed - len(chunk))
             self.samples.append(torch.tensor(chunk[:needed], dtype=torch.long))
+        if not self.samples:
+            self.samples.append(torch.full((needed,), pad_id, dtype=torch.long))
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -48,7 +50,6 @@ class TextDataset(Dataset):
         sample = self.samples[index]
         inputs = sample[:-1]
         labels = sample[1:].clone()
-        labels[labels == 2] = -100  # pad_id is fixed by the local tokenizer
         return inputs, labels
 
 
@@ -83,6 +84,22 @@ def resolve_dtype(config: dict, device: torch.device) -> torch.dtype:
     return dtype
 
 
+def load_or_train_tokenizer(config: dict, corpus: str) -> Tokenizer:
+    tokenizer_cfg = config.get("tokenizer", {})
+    path = Path(tokenizer_cfg.get("path", "artifacts/tokenizer"))
+    tokenizer_file = path / "tokenizer.json"
+    if tokenizer_file.exists():
+        return Tokenizer.load(str(tokenizer_file))
+
+    tokenizer = Tokenizer.train_from_iterator(
+        [corpus],
+        vocab_size=int(tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"])),
+        min_frequency=int(tokenizer_cfg.get("min_frequency", 1)),
+    )
+    tokenizer.save(str(path))
+    return tokenizer
+
+
 def save_checkpoint(path: Path, model, optimizer, scheduler, step, config, tokenizer):
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -92,6 +109,7 @@ def save_checkpoint(path: Path, model, optimizer, scheduler, step, config, token
             "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
             "step": step,
             "config": config,
+            "tokenizer_version": tokenizer.VERSION,
         },
         path,
     )
@@ -106,12 +124,21 @@ def main() -> None:
     parser.add_argument("--device", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data", default=None, help="Optional UTF-8 text file")
+    parser.add_argument("--tokenizer", default=None, help="Optional trained tokenizer directory")
     args = parser.parse_args()
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     config = load_yaml(args.config)
+    corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
+    if args.tokenizer:
+        tokenizer = Tokenizer.load(args.tokenizer)
+    else:
+        tokenizer = load_or_train_tokenizer(config, corpus)
+
+    # The model vocabulary must match the trained tokenizer exactly.
+    config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
     model_config = ModelConfig(config)
     training_config = TrainingConfig(config)
     device = resolve_device(config, args.device)
@@ -121,13 +148,6 @@ def main() -> None:
         int(config.get("data", {}).get("max_seq_length", model_config.max_position_embeddings)),
     )
 
-    tokenizer = Tokenizer()
-    if tokenizer.vocab_size > model_config.vocab_size:
-        raise ValueError(
-            f"Tokenizer vocab_size={tokenizer.vocab_size} exceeds model vocab_size={model_config.vocab_size}."
-        )
-
-    corpus = Path(args.data).read_text(encoding="utf-8") if args.data else DEFAULT_CORPUS
     tokens = tokenizer.encode(corpus, add_special_tokens=True)
     if max(tokens, default=0) >= model_config.vocab_size:
         raise ValueError(
@@ -160,6 +180,7 @@ def main() -> None:
     print(f"Tokenizer: {tokenizer}")
     print(f"Device: {device} | dtype: {dtype}")
     print(f"Parameters: {breakdown['total']:,}")
+    print(f"Vocabulary: {tokenizer.vocab_size:,}")
     print(f"Dataset samples: {len(dataset)} | sequence length: {seq_len}")
 
     optimizer = torch.optim.AdamW(
@@ -212,8 +233,12 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 optimizer_step += 1
 
+                effective_micro_steps = min(
+                    training_config.gradient_accumulation_steps,
+                    micro_steps if is_last_batch and not should_step else training_config.gradient_accumulation_steps,
+                )
                 if optimizer_step % 10 == 0 or optimizer_step == 1:
-                    avg_loss = running_loss / training_config.gradient_accumulation_steps
+                    avg_loss = running_loss / max(1, effective_micro_steps)
                     ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
                     print(
                         f"step={optimizer_step:04d} loss={avg_loss:.4f} "

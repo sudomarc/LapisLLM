@@ -2,134 +2,165 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Iterable
+
+try:
+    from tokenizers import Tokenizer as HFTokenizer
+    from tokenizers.decoders import ByteLevel as ByteLevelDecoder
+    from tokenizers.models import BPE
+    from tokenizers.normalizers import NFKC
+    from tokenizers.pre_tokenizers import ByteLevel
+    from tokenizers.trainers import BpeTrainer
+except ImportError as exc:  # pragma: no cover - exercised only on missing dependency
+    HFTokenizer = None
+    BPE = None
+    ByteLevelDecoder = None
+    ByteLevel = None
+    NFKC = None
+    BpeTrainer = None
+    _IMPORT_ERROR = exc
+else:
+    _IMPORT_ERROR = None
 
 
 class Tokenizer:
-    """Small deterministic character-level tokenizer used by Lapis development builds.
+    """LAPIS BPE tokenizer.
 
-    This is intentionally simple. It is a pipeline tokenizer, not the final Lapis BPE tokenizer.
+    Uses Hugging Face Tokenizers' native BPE implementation with ByteLevel
+    pre-tokenization so the vocabulary can grow with the training corpus while
+    remaining byte-complete for arbitrary UTF-8 input.
     """
 
-    VERSION = "lapis-tokenizer-v2-char"
+    VERSION = "lapis-tokenizer-v3-bpe-bytelevel"
+    SPECIAL_TOKENS = ("<s>", "</s>", "<p>", "<u>")
 
-    def __init__(
-        self,
-        vocab: dict[str, int] | None = None,
-        bos_token: str = "<s>",
-        eos_token: str = "</s>",
-        pad_token: str = "<p>",
-        unk_token: str = "<u>",
-    ):
-        self.bos_token = bos_token
-        self.eos_token = eos_token
-        self.pad_token = pad_token
-        self.unk_token = unk_token
+    def __init__(self, backend: HFTokenizer):
+        self._tokenizer = backend
+        self.bos_token, self.eos_token, self.pad_token, self.unk_token = self.SPECIAL_TOKENS
+        self.bos_id = self._required_id(self.bos_token)
+        self.eos_id = self._required_id(self.eos_token)
+        self.pad_id = self._required_id(self.pad_token)
+        self.unk_id = self._required_id(self.unk_token)
+        self.vocab_size = int(self._tokenizer.get_vocab_size())
 
-        self.vocab = self._build_default_vocab() if vocab is None else {
-            str(token): int(idx) for token, idx in vocab.items()
-        }
-        self.itos = {idx: token for token, idx in self.vocab.items()}
+    @staticmethod
+    def _require_dependency() -> None:
+        if _IMPORT_ERROR is not None:
+            raise RuntimeError(
+                "The 'tokenizers' package is required for the LAPIS BPE tokenizer. "
+                "Install the project dependencies first."
+            ) from _IMPORT_ERROR
 
-        for token in (bos_token, eos_token, pad_token, unk_token):
-            if token not in self.vocab:
-                raise ValueError(f"Missing required special token: {token}")
+    def _required_id(self, token: str) -> int:
+        token_id = self._tokenizer.token_to_id(token)
+        if token_id is None:
+            raise ValueError(f"Missing required special token: {token}")
+        return int(token_id)
 
-        self.bos_id = self.vocab[bos_token]
-        self.eos_id = self.vocab[eos_token]
-        self.pad_id = self.vocab[pad_token]
-        self.unk_id = self.vocab[unk_token]
-        self.vocab_size = len(self.vocab)
+    @classmethod
+    def create_untrained(cls) -> "Tokenizer":
+        cls._require_dependency()
+        tokenizer = HFTokenizer(BPE(unk_token="<u>", byte_fallback=True))
+        tokenizer.normalizer = NFKC()
+        tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False, use_regex=True)
+        tokenizer.decoder = ByteLevelDecoder()
+        tokenizer.add_special_tokens(list(cls.SPECIAL_TOKENS))
+        return cls(tokenizer)
 
-    def _build_default_vocab(self) -> dict[str, int]:
-        vocab: dict[str, int] = {
-            self.bos_token: 0,
-            self.eos_token: 1,
-            self.pad_token: 2,
-            self.unk_token: 3,
-        }
-        alphabet = (
-            "abcdefghijklmnopqrstuvwxyz"
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "0123456789"
-            " .,;:!?\"'()[]{}<>_-/@#$%^&*+=|\\~`\n\t"
+    @classmethod
+    def train_from_iterator(
+        cls,
+        texts: Iterable[str],
+        vocab_size: int = 512,
+        min_frequency: int = 1,
+    ) -> "Tokenizer":
+        tokenizer = cls.create_untrained()
+        trainer = BpeTrainer(
+            vocab_size=int(vocab_size),
+            min_frequency=int(min_frequency),
+            special_tokens=list(cls.SPECIAL_TOKENS),
+            limit_alphabet=256,
+            show_progress=True,
         )
-        for char in alphabet:
-            if char not in vocab:
-                vocab[char] = len(vocab)
-        return vocab
+        tokenizer._tokenizer.train_from_iterator(texts, trainer=trainer)
+        tokenizer._tokenizer.decoder = ByteLevelDecoder()
+        return cls(tokenizer._tokenizer)
+
+    @classmethod
+    def train_from_files(
+        cls,
+        files: list[str],
+        vocab_size: int = 32000,
+        min_frequency: int = 2,
+    ) -> "Tokenizer":
+        tokenizer = cls.create_untrained()
+        trainer = BpeTrainer(
+            vocab_size=int(vocab_size),
+            min_frequency=int(min_frequency),
+            special_tokens=list(cls.SPECIAL_TOKENS),
+            limit_alphabet=256,
+            show_progress=True,
+        )
+        tokenizer._tokenizer.train(files, trainer=trainer)
+        tokenizer._tokenizer.decoder = ByteLevelDecoder()
+        return cls(tokenizer._tokenizer)
+
+    @classmethod
+    def load(cls, path: str) -> "Tokenizer":
+        cls._require_dependency()
+        tokenizer_path = Path(path)
+        if tokenizer_path.is_dir():
+            tokenizer_path = tokenizer_path / "tokenizer.json"
+        backend = HFTokenizer.from_file(str(tokenizer_path))
+        return cls(backend)
 
     def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        ids: list[int] = []
+        encoding = self._tokenizer.encode(text, add_special_tokens=False)
+        ids = list(encoding.ids)
         if add_special_tokens:
-            ids.append(self.bos_id)
-        ids.extend(self.vocab.get(char, self.unk_id) for char in text)
-        if add_special_tokens:
-            ids.append(self.eos_id)
+            ids = [self.bos_id, *ids, self.eos_id]
         return ids
-
-    def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
-        special_ids = {self.bos_id, self.eos_id, self.pad_id}
-        output: list[str] = []
-        for idx in token_ids:
-            idx = int(idx)
-            if skip_special_tokens and idx in special_ids:
-                continue
-            output.append(self.itos.get(idx, self.unk_token))
-        return "".join(output)
 
     def batch_encode(self, texts, add_special_tokens: bool = True) -> list[list[int]]:
         return [self.encode(text, add_special_tokens=add_special_tokens) for text in texts]
 
+    def decode(self, token_ids, skip_special_tokens: bool = True) -> str:
+        ids = [int(idx) for idx in token_ids]
+        if skip_special_tokens:
+            ids = [
+                idx
+                for idx in ids
+                if idx not in {self.bos_id, self.eos_id, self.pad_id}
+            ]
+        return self._tokenizer.decode(ids, skip_special_tokens=False)
+
     def save(self, path: str) -> None:
         directory = Path(path)
         directory.mkdir(parents=True, exist_ok=True)
-        with (directory / "tokenizer.json").open("w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "vocab": self.vocab,
-                    "bos_token": self.bos_token,
-                    "eos_token": self.eos_token,
-                    "pad_token": self.pad_token,
-                    "unk_token": self.unk_token,
-                    "vocab_size": self.vocab_size,
-                },
-                handle,
-                ensure_ascii=False,
-                indent=2,
-            )
+        self._tokenizer.save(str(directory / "tokenizer.json"))
+        metadata = {
+            "tokenizer_version": self.VERSION,
+            "type": "bpe",
+            "pre_tokenizer": "ByteLevel",
+            "normalizer": "NFKC",
+            "model": "BPE",
+            "vocab_size": self.vocab_size,
+            "special_tokens": {
+                "bos": self.bos_token,
+                "eos": self.eos_token,
+                "pad": self.pad_token,
+                "unk": self.unk_token,
+            },
+        }
         with (directory / "metadata.json").open("w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "tokenizer_version": self.VERSION,
-                    "type": "character",
-                    "model_arch": "decoder-only transformer",
-                },
-                handle,
-                ensure_ascii=False,
-                indent=2,
-            )
-
-    @classmethod
-    def load(cls, path: str) -> "Tokenizer":
-        vocab_path = Path(path) / "tokenizer.json"
-        with vocab_path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        return cls(
-            vocab=data["vocab"],
-            bos_token=data.get("bos_token", "<s>"),
-            eos_token=data.get("eos_token", "</s>"),
-            pad_token=data.get("pad_token", "<p>"),
-            unk_token=data.get("unk_token", "<u>"),
-        )
+            json.dump(metadata, handle, ensure_ascii=False, indent=2)
 
     def __len__(self) -> int:
         return self.vocab_size
 
     def __getitem__(self, token: str) -> int:
-        return self.vocab.get(token, self.unk_id)
+        token_id = self._tokenizer.token_to_id(token)
+        return self.unk_id if token_id is None else int(token_id)
 
     def __repr__(self) -> str:
-        return (
-            f"Tokenizer(vocab_size={self.vocab_size}, "
-            f"type=character, bos={self.bos_token!r}, eos={self.eos_token!r})"
-        )
+        return f"Tokenizer(vocab_size={self.vocab_size}, type=bpe-bytelevel)"

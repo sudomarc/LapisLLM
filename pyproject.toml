@@ -4,8 +4,8 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "lapis"
-version = "0.1.0"
-description = "Build your own Large Language Model from scratch"
+version = "0.2.0"
+description = "LAPIS language model and training stack from scratch"
 requires-python = ">=3.11"
 dependencies = [
     "torch>=2.0.0",
@@ -17,6 +17,7 @@ dependencies = [
     "pytest>=7.4.0",
     "ruff>=0.1.0",
     "pyyaml>=6.0.0",
+    "tokenizers>=0.23.2",
 ]
 
 [project.scripts]

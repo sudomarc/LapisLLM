@@ -1,9 +1,9 @@
-# Lapis Local Dev: intentionally tiny CPU-friendly configuration.
-# This configuration validates the complete training/inference pipeline,
-# not model quality or language capability.
+# Lapis Local Dev: tiny CPU-friendly configuration for pipeline development.
+# The real model vocabulary is produced by the BPE tokenizer training step.
+# Keep this vocabulary comfortably above the 256-byte ByteLevel alphabet.
 
 model:
-  vocab_size: 128
+  vocab_size: 512
   hidden_size: 96
   intermediate_size: 256
   num_layers: 2
@@ -13,6 +13,11 @@ model:
   rope_theta: 10000.0
   dropout: 0.0
   bias: true
+
+tokenizer:
+  path: artifacts/tokenizer
+  vocab_size: 512
+  min_frequency: 1
 
 training:
   learning_rate: 0.001
