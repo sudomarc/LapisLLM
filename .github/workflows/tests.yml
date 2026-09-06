@@ -4,10 +4,19 @@ on:
   push:
     branches: ["main"]
   pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lapis-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,18 +25,74 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -e .
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
 
-      - name: Run tests
-        run: python -m pytest
-
-      - name: Run tiny training smoke test
-        run: python scripts/train.py --config configs/tiny.yaml --epochs 1 --device cpu
-
-      - name: Run evaluation smoke test
-        run: python scripts/evaluate.py --checkpoint checkpoints/latest.pt --device cpu
+      - name: Compile Python sources
+        run: python -m compileall -q lapis scripts tests
 
       - name: Ruff check
-        run: ruff check .
+        run: python -m ruff check .
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Build wheel
+        run: python -m pip wheel . --no-deps --wheel-dir dist
+
+      - name: Verify installed entrypoints
+        run: |
+          train --help
+          prepare_data --help
+          evaluate --help
+          generate --help
+
+      - name: Run CPU training smoke test
+        run: |
+          python scripts/train.py \
+            --config configs/local-dev.yaml \
+            --epochs 1 \
+            --device cpu \
+            --checkpoint /tmp/lapis-smoke/checkpoint.pt
+
+      - name: Run resume smoke test
+        run: |
+          python scripts/train.py \
+            --config configs/local-dev.yaml \
+            --epochs 1 \
+            --device cpu \
+            --resume /tmp/lapis-smoke/checkpoint.pt \
+            --checkpoint /tmp/lapis-smoke/resumed.pt
+
+      - name: Run evaluation smoke test
+        run: |
+          python scripts/evaluate.py \
+            --checkpoint /tmp/lapis-smoke/resumed.pt \
+            --device cpu
+
+      - name: Run generation smoke test
+        run: |
+          python scripts/generate.py \
+            --checkpoint /tmp/lapis-smoke/resumed.pt \
+            --device cpu \
+            --prompt "Lapis" \
+            --max-new-tokens 2 \
+            --temperature 0
+
+      - name: Verify explicit CUDA failure on non-CUDA runner
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          if python - <<'PY'
+          import torch
+          raise SystemExit(0 if not torch.cuda.is_available() else 1)
+          PY
+          then
+            python scripts/train.py --config configs/local-dev.yaml --device cuda --epochs 1 2>&1 | tee /tmp/cuda.log
+            ! grep -q "Checkpoint saved:" /tmp/cuda.log
+          else
+            echo "CUDA is available on this runner; CUDA execution is validated elsewhere."
+          fi
