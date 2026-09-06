@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "lapis"
-version = "0.2.0"
+version = "0.1.1"
 description = "LAPIS language model and training stack from scratch"
 requires-python = ">=3.11"
 dependencies = [
