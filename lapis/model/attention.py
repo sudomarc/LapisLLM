@@ -51,9 +51,11 @@ class CausalSelfAttention(nn.Module):
         if freqs_cis is None:
             freqs_cis = precompute_freqs_cis(
                 self.head_dim, self.max_position_embeddings, self.rope_theta
-            ).to(x.device)
+            ).to(device=x.device, dtype=torch.complex64)
         else:
-            freqs_cis = freqs_cis.to(x.device)
+            # Module.to(dtype=...) also casts registered buffers. RoPE frequencies
+            # are represented as complex cis values and must retain that dtype.
+            freqs_cis = freqs_cis.to(device=x.device, dtype=torch.complex64)
 
         q, k = apply_rotary_pos_emb(q, k, freqs_cis)
 
