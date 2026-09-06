@@ -1,23 +1,28 @@
-# Lapis Tiny: small enough for local CPU development and real training experiments.
+# Lapis Small: compact enough for Colab/local experiments, but large enough to learn useful language structure.
 model:
-  vocab_size: 256
-  hidden_size: 128
-  intermediate_size: 256
-  num_layers: 2
-  num_attention_heads: 4
-  num_key_value_heads: 2
-  max_position_embeddings: 128
+  vocab_size: 4096
+  hidden_size: 256
+  intermediate_size: 1024
+  num_layers: 6
+  num_attention_heads: 8
+  num_key_value_heads: 4
+  max_position_embeddings: 512
   rope_theta: 10000.0
   dropout: 0.0
   bias: true
 
+tokenizer:
+  path: "artifacts/tokenizer"
+  vocab_size: 4096
+  min_frequency: 2
+
 training:
   learning_rate: 3e-4
   weight_decay: 0.1
-  warmup_steps: 10
-  max_steps: 200
-  batch_size: 4
-  micro_batch_size: 2
+  warmup_steps: 100
+  max_steps: 3000
+  batch_size: 8
+  micro_batch_size: 4
   gradient_accumulation_steps: 2
   gradient_clip: 1.0
 
@@ -26,8 +31,6 @@ runtime:
   device: "auto"
   compile: false
 
-# Built-in corpus keeps the first smoke training run self-contained.
 data:
-  dataset_name: "lapis-smoke"
-  # One extra token is retained by TextDataset for the causal target shift.
-  max_seq_length: 127
+  dataset_name: "lapis-open-mixture"
+  max_seq_length: 511
