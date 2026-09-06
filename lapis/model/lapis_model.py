@@ -98,8 +98,8 @@ class LapisModel(nn.Module):
             raise ValueError("input_ids must have shape [batch, sequence]")
         if input_ids.dtype != torch.long:
             raise ValueError("input_ids must use torch.long dtype")
-        if input_ids.size(0) < 1 or input_ids.size(1) < 2:
-            raise ValueError("input_ids must contain at least one batch and two tokens")
+        if input_ids.size(0) < 1 or input_ids.size(1) < 1:
+            raise ValueError("input_ids must contain at least one batch and one token")
         if torch.any(input_ids < 0) or torch.any(input_ids >= self.vocab_size):
             raise ValueError("input_ids contains token IDs outside the model vocabulary")
 
@@ -122,6 +122,8 @@ class LapisModel(nn.Module):
         logits = self.lm_head(self.norm(h))
         loss = None
         if labels is not None:
+            if seq_len < 2:
+                raise ValueError("labels require input_ids with at least two tokens")
             if not isinstance(labels, torch.Tensor) or labels.shape != input_ids.shape:
                 raise ValueError("labels must have the same shape as input_ids")
             if labels.dtype != torch.long:
