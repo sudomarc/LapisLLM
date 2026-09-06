@@ -211,7 +211,7 @@ def main() -> None:
 
     optimizer_step = 0
     epoch = 0
-    micro_steps = 0
+    accumulation_count = 0
     running_loss = 0.0
 
     if args.resume:
@@ -236,7 +236,7 @@ def main() -> None:
     while optimizer_step < training_config.max_steps and args.epochs > 0:
         args.epochs -= 1
         epoch += 1
-        for input_ids, labels in dataloader:
+        for batch_index, (input_ids, labels) in enumerate(dataloader):
             if optimizer_step >= training_config.max_steps:
                 break
             input_ids = input_ids.to(device)
@@ -247,29 +247,32 @@ def main() -> None:
 
             (loss / training_config.gradient_accumulation_steps).backward()
             running_loss += loss.item()
-            micro_steps += 1
+            accumulation_count += 1
 
-            should_step = micro_steps % training_config.gradient_accumulation_steps == 0
-            is_last_batch = micro_steps % len(dataloader) == 0
-            if should_step or is_last_batch:
+            end_of_epoch = batch_index == len(dataloader) - 1
+            should_step = accumulation_count == training_config.gradient_accumulation_steps
+            if should_step or end_of_epoch:
+                if accumulation_count < training_config.gradient_accumulation_steps:
+                    correction = training_config.gradient_accumulation_steps / accumulation_count
+                    for parameter in model.parameters():
+                        if parameter.grad is not None:
+                            parameter.grad.mul_(correction)
+
                 torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.gradient_clip)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
                 optimizer_step += 1
 
-                effective_micro_steps = min(
-                    training_config.gradient_accumulation_steps,
-                    micro_steps if is_last_batch and not should_step else training_config.gradient_accumulation_steps,
-                )
                 if optimizer_step % 10 == 0 or optimizer_step == 1:
-                    avg_loss = running_loss / max(1, effective_micro_steps)
+                    avg_loss = running_loss / max(1, accumulation_count)
                     ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
                     print(
                         f"step={optimizer_step:04d} loss={avg_loss:.4f} "
                         f"ppl={ppl:.2f} lr={optimizer.param_groups[0]['lr']:.6g}"
                     )
-                    running_loss = 0.0
+                running_loss = 0.0
+                accumulation_count = 0
 
     checkpoint_path = Path("checkpoints/latest.pt")
     save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, epoch, config, tokenizer)
