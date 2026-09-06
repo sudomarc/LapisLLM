@@ -3,10 +3,12 @@
 > A compact, end-to-end implementation of an LLM stack in Python—from tokenizer to serving.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main)](https://github.com/sudomarc/LapisLLM/actions)
 
 ## Overview
+
+**Lapis is a from-scratch decoder-only Transformer language model.**
 
 LapisLLM provides a clean, modular, and reproducible implementation of a complete LLM pipeline. Each component—tokenizer, data processing, training, and inference—is standalone, well-tested, and configurable. The project prioritizes **transparency** (all code visible, no binary dependencies), **reproducibility** (versioned artifacts and deterministic training), and **developer ergonomics** (configuration-driven workflows).
 
@@ -16,10 +18,16 @@ Perfect for:
 - Serving local inference with a lightweight API
 - Building on top of a well-structured foundation
 
+## Current Status
+
+**LAPIS 0.1.1 — CORRECTNESS**
+
+> The core Transformer training pipeline is now correctness-focused and covered by automated component tests. The next milestone is validation through reproducible training experiments and tiny-dataset overfitting.
+
 ## Quick Start
 
 ### Prerequisites
-- Python 3.10 or later
+- Python 3.11 or later
 - ~2GB+ disk space for dependencies and example configs
 
 ### Installation
@@ -62,8 +70,18 @@ python scripts/generate.py --checkpoint checkpoints/latest --prompt "Hello, worl
 
 ## Core Features
 
+### Architecture
+
+- **Decoder-only Transformer** (GPT-style)
+- **RMSNorm** for efficient layer normalization
+- **Rotary Positional Embeddings (RoPE)** for rotation-based position encoding
+- **Grouped Query Attention (GQA)** for memory efficiency
+- **SwiGLU** feed-forward networks
+- **Causal self-attention** for language modeling
+- Configurable model dimensions (hidden size, layers, heads)
+
 ### 🔤 Tokenizer
-- BPE tokenizer training with configurable vocabulary size
+- BPE ByteLevel tokenizer with configurable vocabulary size
 - Serializable tokenizer artifacts linked to model checkpoints
 - Clean separation between training and inference pipelines
 
@@ -73,30 +91,26 @@ python scripts/generate.py --checkpoint checkpoints/latest --prompt "Hello, worl
 - **Packing**: Efficient sequence packing with cross-document boundaries
 - **Manifests**: Deterministic data references for reproducible training runs
 
-### 🧠 Transformer Model
-- Decoder-only architecture (GPT-style)
-- Rotary positional embeddings (RoPE)
-- Key-value cache for efficient generation
-- Pure PyTorch implementation, fully auditable
-
 ### 🎓 Training
-- Distributed training support (DDP-ready)
+- Correct causal target alignment (no double-shifting)
+- Padding-aware loss masking (uses -100 for ignored positions)
+- Linear warmup followed by cosine decay schedule
 - Comprehensive checkpointing (weights, optimizer, scheduler, RNG state)
 - Tensorboard logging and evaluation hooks
-- Gradient accumulation and mixed precision support
+- Gradient accumulation and gradient clipping
 
 ### 🚀 Inference & Serving
 - Multiple generation strategies (greedy, temperature sampling, top-k/top-p)
 - Interactive chat interface
 - Local HTTP API with streaming support
-- Export to safetensors and GGUF formats
+- Export to safetensors format
 
 ## Usage
 
 ### Common Commands
 
 | Task | Command |
-|------|---------|
+|------|----------|
 | Train tokenizer | `python scripts/train_tokenizer.py --config configs/tiny.yaml` |
 | Prepare data | `python scripts/prepare_data.py --config configs/development.yaml` |
 | Train model | `python scripts/train.py --config configs/development.yaml` |
@@ -144,7 +158,7 @@ LapisLLM/
 ## Checkpoints
 
 Checkpoints are versioned, reproducible snapshots containing:
-- **Model weights** (float32 or quantized)
+- **Model weights** (float32)
 - **Optimizer & scheduler state** (for resuming training)
 - **Global step** (iteration counter)
 - **RNG seed state** (for deterministic resumption)
@@ -196,7 +210,7 @@ Common extension points:
 
 - **License**: MIT (see [LICENSE](./LICENSE))
 - **Datasets**: Ensure datasets have clear, permissive licenses before adding to the repo
-- **External code**: All significant external dependencies are listed in `setup.py`
+- **External code**: All significant external dependencies are listed in `pyproject.toml`
 
 ## Resources
 
@@ -211,7 +225,7 @@ If you use LapisLLM in research or production, please cite:
 ```bibtex
 @software{lapislLM2026,
   author = {sudomarc},
-  title = {LapisLLM: End-to-End LLM Implementation in Python},
+  title = {LapisLLM: From-Scratch Decoder-Only Transformer Language Model},
   url = {https://github.com/sudomarc/LapisLLM},
   year = {2026}
 }
@@ -232,4 +246,4 @@ LapisLLM draws inspiration from:
 
 ---
 
-**Status**: Active development. Architecture is stable; feedback welcome.
+**Status**: Correctness milestone (0.1.1). Architecture is stable; feedback welcome.
