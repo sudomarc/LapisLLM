@@ -1,7 +1,7 @@
 {
   "project": "LapisLLM",
   "collector": "scripts/fetch_training_data.py",
-  "generated_at_utc": "2026-09-06T04:18:38Z",
+  "generated_at_utc": "2026-09-06T04:25:10Z",
   "settings": {
     "ascii_only": false,
     "keep_markdown": false,
@@ -26,57 +26,52 @@
       "representation learning",
       "word embedding"
     ],
-    "articles_requested": 36,
-    "articles_collected": 36
+    "articles_requested": 35,
+    "articles_collected": 35
   },
   "github": {
     "repositories": [
       {
         "repo": "pytorch/pytorch",
-        "branch": "main",
-        "files_requested": 20,
-        "files_collected": 20
+        "status": "metadata_failed",
+        "files": 0
       },
       {
         "repo": "huggingface/transformers",
-        "branch": "main",
-        "files_requested": 20,
-        "files_collected": 20
+        "status": "metadata_failed",
+        "files": 0
       },
       {
         "repo": "openai/gpt-2",
-        "branch": "master",
-        "files_requested": 1,
-        "files_collected": 1
+        "status": "metadata_failed",
+        "files": 0
       },
       {
         "repo": "karpathy/nanoGPT",
-        "branch": "master",
-        "files_requested": 4,
-        "files_collected": 4
+        "status": "metadata_failed",
+        "files": 0
       },
       {
         "repo": "facebookresearch/llama",
-        "branch": "main",
-        "files_requested": 2,
-        "files_collected": 2
+        "status": "metadata_failed",
+        "files": 0
       }
     ],
-    "documents_collected": 47
+    "documents_collected": 0
   },
   "outputs": {
     "wikipedia.txt": {
-      "bytes": 959771,
-      "records": 36
+      "bytes": 881930,
+      "records": 35
     },
     "github.txt": {
-      "bytes": 590934,
-      "records": 47
+      "bytes": 0,
+      "records": 0
     },
     "combined.txt": {
-      "bytes": 1551394,
-      "records": 83,
-      "approx_tokens": 205157
+      "bytes": 882280,
+      "records": 35,
+      "approx_tokens": 127851
     }
   }
 }
