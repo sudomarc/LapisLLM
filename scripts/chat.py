@@ -1,66 +1,46 @@
-"""Chat script for LAPIS model.
+#!/usr/bin/env python3
+"""Interactive chat with a trained Lapis checkpoint."""
 
-Usage:
-    python scripts/chat.py --checkpoint checkpoints/latest
-"""
+from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
 import torch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from lapis.model.lapis_model import LapisModel
+from lapis.tokenizer.tokenizer import Tokenizer
+from scripts.generate import generate
 
 
-@torch.no_grad()
-def chat_loop(model, checkpoint_path, device="cpu"):
-    """Run an interactive chat loop."""
-    # Load checkpoint
-    if checkpoint_path and os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        print(f"Loaded checkpoint from {checkpoint_path}")
-    
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Chat with LAPIS")
+    parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
+    parser.add_argument("--device", default="auto")
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else "cpu" if args.device == "auto" else args.device)
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    model = LapisModel(**checkpoint["config"]["model"]).to(device)
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    model.to(device)
-    
-    print("LAPIS Chat (type 'quit' to exit)")
-    print("=" * 40)
-    
+    tokenizer = Tokenizer.load(str(Path(args.checkpoint).parent / "tokenizer"))
+
+    print("LAPIS Chat — type 'quit' to exit")
     while True:
         try:
-            prompt = input("\nYou: ")
-            if prompt.lower() in ["quit", "exit", ""]:
-                break
-            
-            # Generate response
-            input_ids = torch.tensor([prompt.encode() if hasattr(prompt, 'encode') else prompt], 
-                                      dtype=torch.long).to(device)
-            logits, _ = model(input_ids)
-            logits = logits[:, -1, :] / 0.7  # temperature
-            
-            # Greedy sampling
-            next_token = torch.argmax(logits, dim=-1)
-            
-            # Simple response
-            response_token = next_token.item()
-            print(f"Lapis: token {response_token}")
-            
-        except KeyboardInterrupt:
+            prompt = input("\nYou: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
             break
-    
-    print("Goodbye!")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="LAPIS Chat")
-    parser.add_argument("--checkpoint", type=str, default="checkpoints/latest", help="Path to checkpoint")
-    args = parser.parse_args()
-    
-    model = LapisModel(vocab_size=50304, hidden_size=384, num_layers=2)
-    chat_loop(model, args.checkpoint)
+        if prompt.lower() in {"quit", "exit"}:
+            break
+        response = generate(model, tokenizer, prompt, 64, 0.8, 40, 0.95)
+        print(f"Lapis: {response}")
 
 
 if __name__ == "__main__":
-    import os
-    import sys
-    sys.path.insert(0, os.path.dirname(__file__) + "/../")
     main()
