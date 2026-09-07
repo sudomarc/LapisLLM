@@ -22,14 +22,43 @@ def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> Non
             f"{checkpoint_version!r} != {tokenizer.VERSION!r}"
         )
 
+    checkpoint_vocab = checkpoint.get("config", {}).get("model", {}).get("vocab_size")
+    if checkpoint_vocab is not None and int(checkpoint_vocab) != tokenizer.vocab_size:
+        raise ValueError(
+            "Checkpoint vocabulary size does not match the tokenizer: "
+            f"{checkpoint_vocab} != {tokenizer.vocab_size}"
+        )
+
+
+def validate_sampling_args(max_new_tokens: int, temperature: float, top_k: int, top_p: float) -> None:
+    if max_new_tokens < 1:
+        raise ValueError("max_new_tokens must be at least 1")
+    if temperature <= 0:
+        raise ValueError("temperature must be greater than 0")
+    if top_k < 0:
+        raise ValueError("top_k must be >= 0")
+    if not 0 < top_p <= 1:
+        raise ValueError("top_p must be in the range (0, 1]")
+
 
 def sample_next_token(logits, temperature, top_k, top_p):
-    logits = logits / max(temperature, 1e-6)
+    if temperature <= 0:
+        raise ValueError("temperature must be greater than 0")
+    if top_k < 0:
+        raise ValueError("top_k must be >= 0")
+    if not 0 < top_p <= 1:
+        raise ValueError("top_p must be in the range (0, 1]")
+
+    logits = logits / temperature
 
     if top_k > 0:
         values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
         cutoff = values[..., -1, None]
-        logits = torch.where(logits < cutoff, torch.full_like(logits, float("-inf")), logits)
+        logits = torch.where(
+            logits < cutoff,
+            torch.full_like(logits, float("-inf")),
+            logits,
+        )
 
     if top_p < 1.0:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
@@ -41,10 +70,13 @@ def sample_next_token(logits, temperature, top_k, top_p):
         logits.scatter_(dim=-1, index=sorted_indices, src=sorted_logits)
 
     probabilities = torch.softmax(logits, dim=-1)
+    if not torch.isfinite(probabilities).all():
+        raise RuntimeError("Sampling produced non-finite probabilities")
     return torch.multinomial(probabilities, num_samples=1)
 
 
 def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p):
+    validate_sampling_args(max_new_tokens, temperature, top_k, top_p)
     token_ids = tokenizer.encode(prompt, add_special_tokens=False)
     if not token_ids:
         token_ids = [tokenizer.bos_id]
@@ -80,11 +112,30 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
-    device = resolve_device(args.device)
+    try:
+        validate_sampling_args(
+            args.max_new_tokens,
+            args.temperature,
+            args.top_k,
+            args.top_p,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
     checkpoint = Path(args.checkpoint)
+    if not checkpoint.exists():
+        parser.error(f"Checkpoint not found: {checkpoint}")
+
+    device = resolve_device(args.device)
     checkpoint_data = torch.load(checkpoint, map_location=device, weights_only=False)
 
-    tokenizer_dir = Path(args.tokenizer) if args.tokenizer else checkpoint.parent / "tokenizer"
+    tokenizer_dir = (
+        Path(args.tokenizer)
+        if args.tokenizer
+        else checkpoint.parent / "tokenizer"
+    )
+    if not tokenizer_dir.exists():
+        parser.error(f"Tokenizer directory not found: {tokenizer_dir}")
     tokenizer = Tokenizer.load(str(tokenizer_dir))
     validate_checkpoint_tokenizer(checkpoint_data, tokenizer)
 
