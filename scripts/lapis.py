@@ -227,7 +227,8 @@ def train_one_run(
 
     command = [
         sys.executable,
-        "scripts/train.py",
+        "-m",
+        "scripts.train",
         "--config",
         str(config.relative_to(REPO_ROOT)),
         "--device",
@@ -249,6 +250,7 @@ def train_one_run(
     ]
 
     started = time.monotonic()
+    output_tail: list[str] = []
     process = subprocess.Popen(
         command,
         cwd=REPO_ROOT,
@@ -263,6 +265,10 @@ def train_one_run(
     assert process.stdout is not None
     for raw_line in process.stdout:
         line = raw_line.rstrip("\n")
+        if line.strip():
+            output_tail.append(line)
+            if len(output_tail) > 80:
+                output_tail.pop(0)
         parsed = parse_training_line(line)
         if parsed:
             last_step, last_loss = parsed
@@ -291,7 +297,11 @@ def train_one_run(
     elapsed = time.monotonic() - started
 
     if return_code != 0:
-        raise RuntimeError(f"Training process failed with exit code {return_code} for {run_id}")
+        diagnostic = "\n".join(output_tail[-20:])
+        raise RuntimeError(
+            f"Training process failed with exit code {return_code} for {run_id}\n"
+            f"Last training output:\n{diagnostic}"
+        )
 
     if not checkpoint.exists():
         raise RuntimeError(f"Training finished but checkpoint is missing: {checkpoint}")
