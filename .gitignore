@@ -16,6 +16,7 @@ data/cleaned/
 data/deduplicated/
 data/tokenized/
 data/manifests/
+training_data/
 
 # Checkpoints and outputs
 checkpoints/
@@ -23,10 +24,6 @@ artifacts/
 outputs/
 logs/
 runs/
-
-# IDE
-.vscode/
-.idea/
 
 # Model checkpoints (large files)
 *.safetensors
