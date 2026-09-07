@@ -27,6 +27,7 @@ data = [
 ]
 
 [project.scripts]
+lapis = "scripts.lapis:main"
 train_tokenizer = "scripts.train_tokenizer:main"
 prepare_data = "scripts.prepare_data:main"
 train = "scripts.train:main"
