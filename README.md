@@ -30,110 +30,185 @@ Run the test suite:
 python -m pytest
 ```
 
-### Launch the chatbot directly
+## Lapis Console
 
-A trained checkpoint and its tokenizer are exposed through the repository's chat entrypoint. After the editable install, launch Lapis with:
-
-```bash
-chat
-```
-
-or:
+The recommended entrypoint for Colab and local experimentation is the unified Lapis Console:
 
 ```bash
-lapis-chat
+lapis
 ```
 
-You can also run it directly from the repository without reinstalling the package:
+or directly from a checkout:
 
 ```bash
-python -m scripts.chat
+python scripts/lapis.py
 ```
 
-The default runtime looks for:
+The console starts by synchronizing with `origin/main`. It refuses to overwrite a dirty working tree. The training command then orchestrates data preparation, GPU training, the Learning Monitor, strict checkpoint validation, experiment history, Git commit/push, and finally the trained chatbot.
+
+### One-command training
+
+```bash
+lapis train
+```
+
+The console asks:
 
 ```text
-checkpoints/latest.pt
-checkpoints/tokenizer/
+How many training runs? ›
+Learning monitor interval [500]? ›
 ```
 
-Those paths can be overridden when testing another model:
+For each run it performs:
 
-```bash
-chat --checkpoint checkpoints/my-model.pt --device cpu
+```text
+GIT PULL
+   ↓
+VERIFY WORKTREE
+   ↓
+BUILD TRAINING CORPUS
+   ↓
+TRAIN ON CUDA
+   ↓
+LIVE PROGRESS + LEARNING MONITOR
+   ↓
+VERIFY CHECKPOINT / STEPS / MONITOR
+   ↓
+WRITE TRAINING HISTORY
+   ↓
+GIT COMMIT + PUSH
+   ↓
+LAUNCH CHAT
 ```
 
-### Training and the Learning Monitor
+A run is never reported as successful without a checkpoint, a matching recorded optimizer step count, and monitor records. Incomplete runs do not trigger the final history push.
 
-The trainer can now show what the model is learning during optimization instead of reporting only scalar loss. Every monitor interval it records loss, perplexity, learning rate, tokens seen, and fresh generations from fixed prompts using the current in-memory model.
+Large model checkpoints remain local by default. Only lightweight experiment history is written to `training_history/` and pushed: metadata, final metrics, and final learning samples.
 
-Enable the monitor (it is on by default) with:
+## Learning Monitor
 
-```bash
-python scripts/train.py \
-  --config configs/tiny.yaml \
-  --device cuda \
-  --data training_data/combined.txt \
-  --monitor-interval 500
-```
+The trainer observes the model while it is learning. At each configured interval it reports:
 
-The terminal output includes sections like:
+- loss and perplexity
+- learning rate
+- tokens seen
+- generated samples from fixed prompts
+
+Example:
 
 ```text
 ──────────────────────────────────────────────────────────────────────
 LEARNING MONITOR
-step=00500  loss=...  ppl=...  lr=...  tokens=...
+step=05000  loss=...  ppl=...  lr=...  tokens=...
 
 WHAT LAPIS IS LEARNING
 
 Prompt : Machine learning is
 Lapis  : ...
 
-Prompt : A neural network can
+Prompt : The transformer architecture
 Lapis  : ...
 ```
 
-The monitor also writes JSONL records to:
+Monitor records are stored as JSONL next to the local checkpoint. The trainer temporarily switches the model to evaluation mode for sampling and restores training mode afterward.
 
-```text
-<checkpoint-directory>/learning_monitor.jsonl
-```
-
-Each generation temporarily switches the model to evaluation mode, runs inference without gradients, and restores training mode. This keeps the monitor separate from optimizer updates.
-
-Customize the monitor with:
+Low-level customization:
 
 ```bash
 python scripts/train.py \
-  --monitor-interval 250 \
-  --monitor-sample-tokens 64 \
-  --monitor-prompts "Machine learning is||The transformer architecture||Language models learn" \
-  --monitor-log checkpoints/run/learning_monitor.jsonl
+  --config configs/tiny.yaml \
+  --device cuda \
+  --data training_data/combined.txt \
+  --monitor-interval 500 \
+  --monitor-sample-tokens 64
 ```
 
-Use `--monitor-interval 0` to disable it.
-
-### Terminal interface
-
-The CLI is local-first and terminal-native. Its interface uses a compact, Claude Code-inspired layout with a model header, device/checkpoint status, streaming responses, and slash commands.
-
-Available commands inside the chat:
-
-```text
-/help   show commands
-/clear  clear the terminal and redraw the session header
-/exit   leave the chat
-```
-
-Useful generation options:
+Custom prompts use `||` as separators:
 
 ```bash
-chat --max-new-tokens 128
-chat --temperature 0.7 --top-k 40 --top-p 0.95
-chat --no-color
+python scripts/train.py \
+  --monitor-prompts "Machine learning is||The transformer architecture||Language models learn"
 ```
 
-The chatbot runs entirely against the selected local checkpoint. It does not require an external API key or hosted inference service.
+Use `--monitor-interval 0` to disable the monitor in the low-level trainer.
+
+## Training progress
+
+The unified console converts training steps into a live terminal progress display:
+
+```text
+[████████████████░░░░░░░░░░░░░░░░]  5,000/10,000  50.00% loss=1.4821 18.7 step/s ETA 4m 27s
+```
+
+The progress display includes step count, percentage, loss, steps/second, and estimated time remaining.
+
+## Training history
+
+Every verified run creates:
+
+```text
+training_history/
+└── run-YYYYMMDD-HHMMSS-xxxxxx/
+    ├── summary.json
+    └── samples.md
+```
+
+Inspect previous runs:
+
+```bash
+lapis history
+```
+
+Compare two runs:
+
+```bash
+lapis compare
+```
+
+The comparison includes final loss, perplexity, tokens seen, duration, and qualitative learning samples.
+
+## Chat
+
+Launch the latest local trained checkpoint with:
+
+```bash
+lapis chat
+```
+
+The direct entrypoints remain available:
+
+```bash
+chat
+lapis-chat
+python -m scripts.chat
+```
+
+The terminal interface is local-first and uses a compact developer-console design inspired by modern coding assistants. It maintains conversation context within the model's context window and reports generation throughput.
+
+### Chat commands
+
+```text
+/help
+/clear
+/reset
+/stats
+/context
+/model
+/temperature 0.7
+/tokens 128
+/save [file]
+/exit
+```
+
+The session exposes model/device information, context usage, generated-token statistics, runtime temperature, and maximum output length. Conversations can be saved to Markdown.
+
+## System information
+
+```bash
+lapis system
+```
+
+This reports the Git branch and CUDA/GPU information available to the current environment.
 
 ## CPU-only fast training
 
@@ -150,8 +225,6 @@ python scripts/train.py --config configs/tiny.yaml --cpu-fast --epochs 1
 ```
 
 `--cpu-fast` reduces model width, layer count, and context length while keeping the tokenizer vocabulary compatible with the Tiny setup. It is intended for fast iteration and smoke experiments, not final model training. It cannot be combined with `--resume` because the model architecture changes.
-
-CPU runtime settings are configurable under `runtime.cpu` (`threads`, `interop_threads`, `dataloader_workers`, and `pin_memory`). The trainer reports the effective CPU thread configuration at startup.
 
 ## Model
 
@@ -216,9 +289,10 @@ These packages are an experimental specification layer; they do not imply autono
 ```text
 LapisLLM/
 ├── lapis/                 # model, tokenizer, data, config, training helpers
-├── scripts/               # train, evaluate, generate, chat, serve
+├── scripts/               # train, evaluate, generate, chat, serve, lapis console
 ├── configs/               # reproducible YAML experiments
 ├── checkpoints/           # local model checkpoints + tokenizer
+├── training_history/      # lightweight verified experiment records
 ├── tests/                 # correctness and integration tests
 ├── docs/                  # technical project documentation
 ├── website/               # static developer platform / GitHub Pages site
@@ -231,6 +305,8 @@ LapisLLM/
 ## Reproducibility
 
 Checkpoints preserve model, optimizer, scheduler, training/configuration state, tokenizer references, and RNG state. Training accepts an explicit seed. Exact mid-epoch data-loader replay is still being hardened.
+
+The Lapis Console adds per-run metadata and qualitative samples under `training_history/` and validates the recorded optimizer step count before marking a run complete.
 
 ## Known limitations
 
