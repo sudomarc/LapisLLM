@@ -32,13 +32,13 @@ python -m pytest
 
 ### Launch the chatbot directly
 
-A trained checkpoint and its tokenizer are already exposed through the repository's chat entrypoint. After the editable install, launch Lapis with:
+A trained checkpoint and its tokenizer are exposed through the repository's chat entrypoint. After the editable install, launch Lapis with:
 
 ```bash
 chat
 ```
 
-or, with the explicit launcher name:
+or:
 
 ```bash
 lapis-chat
@@ -63,9 +63,59 @@ Those paths can be overridden when testing another model:
 chat --checkpoint checkpoints/my-model.pt --device cpu
 ```
 
+### Training and the Learning Monitor
+
+The trainer can now show what the model is learning during optimization instead of reporting only scalar loss. Every monitor interval it records loss, perplexity, learning rate, tokens seen, and fresh generations from fixed prompts using the current in-memory model.
+
+Enable the monitor (it is on by default) with:
+
+```bash
+python scripts/train.py \
+  --config configs/tiny.yaml \
+  --device cuda \
+  --data training_data/combined.txt \
+  --monitor-interval 500
+```
+
+The terminal output includes sections like:
+
+```text
+──────────────────────────────────────────────────────────────────────
+LEARNING MONITOR
+step=00500  loss=...  ppl=...  lr=...  tokens=...
+
+WHAT LAPIS IS LEARNING
+
+Prompt : Machine learning is
+Lapis  : ...
+
+Prompt : A neural network can
+Lapis  : ...
+```
+
+The monitor also writes JSONL records to:
+
+```text
+<checkpoint-directory>/learning_monitor.jsonl
+```
+
+Each generation temporarily switches the model to evaluation mode, runs inference without gradients, and restores training mode. This keeps the monitor separate from optimizer updates.
+
+Customize the monitor with:
+
+```bash
+python scripts/train.py \
+  --monitor-interval 250 \
+  --monitor-sample-tokens 64 \
+  --monitor-prompts "Machine learning is||The transformer architecture||Language models learn" \
+  --monitor-log checkpoints/run/learning_monitor.jsonl
+```
+
+Use `--monitor-interval 0` to disable it.
+
 ### Terminal interface
 
-The CLI is intentionally local-first and terminal-native. Its interface uses a compact, Claude Code-inspired layout with a model header, device/checkpoint status, streaming responses, and slash commands.
+The CLI is local-first and terminal-native. Its interface uses a compact, Claude Code-inspired layout with a model header, device/checkpoint status, streaming responses, and slash commands.
 
 Available commands inside the chat:
 
