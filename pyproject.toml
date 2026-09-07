@@ -36,9 +36,13 @@ generate = "scripts.generate:main"
 chat = "scripts.chat:main"
 lapis-chat = "scripts.chat:main"
 serve = "scripts.serve:main"
+download_datasets = "scripts.download_datasets:main"
 
 [tool.poetry]
-include = [{ path = "configs/*.yaml", format = "wheel" }]
+include = [
+    { path = "configs/*.yaml", format = "wheel" },
+    { path = "configs/data/*.yaml", format = "wheel" },
+]
 
 [tool.pytest]
 addopts = []
