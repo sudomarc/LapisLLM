@@ -152,8 +152,9 @@ class LearningMonitor:
         loss: float,
         learning_rate: float,
         tokens_seen: int,
+        force: bool = False,
     ) -> None:
-        if not self.should_sample(step):
+        if not force and not self.should_sample(step):
             return
         self.log_metrics(
             step=step,
