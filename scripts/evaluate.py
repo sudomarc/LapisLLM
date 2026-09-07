@@ -25,9 +25,16 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
+    checkpoint_path = Path(args.checkpoint)
+    if not checkpoint_path.exists():
+        parser.error(f"Checkpoint not found: {checkpoint_path}")
+
     device = resolve_device(args.device)
-    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    tokenizer = Tokenizer.load(str(Path(args.checkpoint).parent / "tokenizer"))
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    tokenizer_path = checkpoint_path.parent / "tokenizer"
+    if not tokenizer_path.exists():
+        parser.error(f"Tokenizer directory not found: {tokenizer_path}")
+    tokenizer = Tokenizer.load(str(tokenizer_path))
     validate_checkpoint_tokenizer(checkpoint, tokenizer)
 
     config = checkpoint["config"]
@@ -45,15 +52,23 @@ def main() -> None:
     dataset = TextDataset(tokenizer.encode(corpus), seq_len, tokenizer.pad_id)
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-    total = 0.0
-    count = 0
-    with torch.no_grad():
+    total_loss = 0.0
+    total_tokens = 0
+    with torch.inference_mode():
         for input_ids, labels in loader:
-            _, loss = model(input_ids.to(device), labels=labels.to(device))
-            total += float(loss.item())
-            count += 1
+            valid_tokens = int(labels.ne(-100).sum().item())
+            if valid_tokens == 0:
+                continue
+            _, batch_loss = model(input_ids.to(device), labels=labels.to(device))
+            if batch_loss is None or not torch.isfinite(batch_loss):
+                raise RuntimeError("Evaluation produced a non-finite loss")
+            total_loss += float(batch_loss.item()) * valid_tokens
+            total_tokens += valid_tokens
 
-    loss = total / max(count, 1)
+    if total_tokens == 0:
+        raise RuntimeError("Evaluation dataset contains no valid target tokens")
+
+    loss = total_loss / total_tokens
     ppl = math.exp(loss) if loss < 20 else float("inf")
     print(f"Validation loss: {loss:.6f}")
     print(f"Perplexity: {ppl:.4f}")
