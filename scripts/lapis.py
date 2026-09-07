@@ -18,8 +18,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HISTORY_ROOT = REPO_ROOT / "training_history"
 LOCAL_RUN_ROOT = REPO_ROOT / "checkpoints" / "colab-runs"
+TRAINING_DATA_ROOT = REPO_ROOT / "training_data"
 DEFAULT_CONFIG = REPO_ROOT / "configs" / "tiny.yaml"
-DEFAULT_DATA = REPO_ROOT / "training_data" / "combined.txt"
+DEFAULT_DATA = TRAINING_DATA_ROOT / "combined.txt"
+
+GENERATED_GIT_PREFIXES = ("checkpoints/", "training_data/")
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -47,7 +50,9 @@ def banner() -> None:
     print()
 
 
-def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str], *, check: bool = True, capture: bool = False
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=REPO_ROOT,
@@ -58,17 +63,75 @@ def run(cmd: list[str], *, check: bool = True, capture: bool = False) -> subproc
 
 
 def git_status() -> list[str]:
-    result = run(["git", "status", "--porcelain", "--untracked-files=all"], capture=True)
+    result = run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        capture=True,
+    )
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def status_path(status_line: str) -> str:
+    """Extract the path portion from a porcelain-v1 status line."""
+    path = status_line[3:].strip()
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path
+
+
+def is_generated_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return any(
+        normalized == prefix[:-1] or normalized.startswith(prefix)
+        for prefix in GENERATED_GIT_PREFIXES
+    )
+
+
+def clean_generated_artifacts_before_pull(status: list[str]) -> None:
+    """Discard only known runtime-generated files before a fast-forward pull."""
+    generated = [line for line in status if is_generated_path(status_path(line))]
+    protected = [line for line in status if not is_generated_path(status_path(line))]
+
+    if protected:
+        raise RuntimeError(
+            "Working tree has non-generated local changes. Refusing to pull:\n"
+            + "\n".join(protected)
+        )
+
+    if not generated:
+        return
+
+    print(color("Git", BOLD) + "  cleaning generated Colab artifacts before pull...")
+
+    tracked = run(
+        ["git", "ls-files", "--", "checkpoints", "training_data"],
+        capture=True,
+    ).stdout.splitlines()
+    tracked = [path for path in tracked if path.strip()]
+
+    if tracked:
+        run(["git", "restore", "--source=HEAD", "--worktree", "--", *tracked])
+        print(color(f"✓ Restored {len(tracked)} tracked generated file(s)", OK))
+
+    if TRAINING_DATA_ROOT.exists():
+        untracked_data = [
+            line for line in generated if status_path(line).replace("\\", "/").startswith("training_data/")
+        ]
+        if untracked_data:
+            shutil.rmtree(TRAINING_DATA_ROOT)
+            print(color("✓ Removed generated training_data/; it will be rebuilt", OK))
 
 
 def git_sync_pull() -> None:
     status = git_status()
+    clean_generated_artifacts_before_pull(status)
+
+    status = git_status()
     if status:
         raise RuntimeError(
-            "Working tree is not clean. Refusing to pull over local changes:\n"
+            "Working tree is not clean after generated-artifact cleanup:\n"
             + "\n".join(status)
         )
+
     print(color("Git", BOLD) + "  pulling origin/main...")
     run(["git", "pull", "--ff-only", "origin", "main"])
     print(color("✓ Git pull completed", OK))
@@ -80,9 +143,23 @@ def git_sync_push(message: str) -> None:
         print(color("✓ Nothing new to push", MUTED))
         return
 
+    non_history = [
+        line
+        for line in status
+        if not status_path(line).replace("\\", "/").startswith("training_history/")
+    ]
+    if non_history:
+        raise RuntimeError(
+            "Refusing to push because non-history local changes remain:\n"
+            + "\n".join(non_history)
+        )
+
     print(color("Git", BOLD) + "  staging training history...")
     run(["git", "add", "training_history"])
-    staged = run(["git", "diff", "--cached", "--name-only"], capture=True).stdout.strip()
+    staged = run(
+        ["git", "diff", "--cached", "--name-only"],
+        capture=True,
+    ).stdout.strip()
     if not staged:
         print(color("✓ No pushable history changes", MUTED))
         return
@@ -125,7 +202,14 @@ def parse_training_line(line: str) -> tuple[int, float | None] | None:
     return int(match.group(1)), float(match.group(2))
 
 
-def train_one_run(*, run_number: int, total_runs: int, config: Path, corpus: Path, monitor_interval: int) -> dict:
+def train_one_run(
+    *,
+    run_number: int,
+    total_runs: int,
+    config: Path,
+    corpus: Path,
+    monitor_interval: int,
+) -> dict:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_id = f"run-{timestamp}-{uuid.uuid4().hex[:6]}"
     local_dir = LOCAL_RUN_ROOT / run_id
@@ -176,7 +260,6 @@ def train_one_run(*, run_number: int, total_runs: int, config: Path, corpus: Pat
     )
     last_step = 0
     last_loss: float | None = None
-    first_step_time: float | None = None
 
     assert process.stdout is not None
     for raw_line in process.stdout:
@@ -184,8 +267,6 @@ def train_one_run(*, run_number: int, total_runs: int, config: Path, corpus: Pat
         parsed = parse_training_line(line)
         if parsed:
             last_step, last_loss = parsed
-            if first_step_time is None:
-                first_step_time = time.monotonic()
             elapsed = time.monotonic() - started
             speed = last_step / elapsed if elapsed > 0 else 0.0
             eta = (target_steps - last_step) / speed if speed > 0 else None
@@ -283,12 +364,14 @@ def write_history(summary: dict) -> Path:
         "",
     ]
     for sample in summary.get("samples", []):
-        lines.extend([
-            f"### {sample['prompt']}",
-            "",
-            sample["completion"] or "<EOS>",
-            "",
-        ])
+        lines.extend(
+            [
+                f"### {sample['prompt']}",
+                "",
+                sample["completion"] or "<EOS>",
+                "",
+            ]
+        )
     (run_dir / "samples.md").write_text("\n".join(lines), encoding="utf-8")
     return run_dir
 
@@ -329,7 +412,10 @@ def show_history() -> None:
 def choose_summary(label: str, summaries: list[dict]) -> dict:
     print(f"\n{label}")
     for idx, item in enumerate(summaries, 1):
-        print(f"[{idx}] {item['run_id']}  loss={item.get('final_loss')} ppl={item.get('final_perplexity')}")
+        print(
+            f"[{idx}] {item['run_id']}  "
+            f"loss={item.get('final_loss')} ppl={item.get('final_perplexity')}"
+        )
     raw = input("› ").strip()
     try:
         index = int(raw) - 1
@@ -355,7 +441,9 @@ def compare_runs() -> None:
         ("tokens_seen", "Tokens"),
         ("elapsed_seconds", "Duration (s)"),
     ]:
-        print(f"{label:<24} {str(left.get(key)):<20} {str(right.get(key)):<20}")
+        print(
+            f"{label:<24} {str(left.get(key)):<20} {str(right.get(key)):<20}"
+        )
 
 
 def system_info() -> None:
@@ -375,7 +463,11 @@ def system_info() -> None:
 
 
 def launch_chat() -> None:
-    checkpoints = sorted(LOCAL_RUN_ROOT.glob("*/checkpoint.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    checkpoints = sorted(
+        LOCAL_RUN_ROOT.glob("*/checkpoint.pt"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     if not checkpoints:
         raise RuntimeError("No locally trained checkpoint found. Train a run first.")
     checkpoint = checkpoints[0]
@@ -422,7 +514,10 @@ def train_flow() -> None:
         raise RuntimeError("Number of runs must be at least 1")
 
     monitor_raw = input("Learning monitor interval [500]? › ").strip()
-    monitor_interval = int(monitor_raw) if monitor_raw else 500
+    try:
+        monitor_interval = int(monitor_raw) if monitor_raw else 500
+    except ValueError as exc:
+        raise RuntimeError("Monitor interval must be an integer") from exc
     if monitor_interval < 1:
         raise RuntimeError("Monitor interval must be at least 1")
 
@@ -470,7 +565,10 @@ def interactive() -> None:
     if choice == "1":
         train_flow()
     elif choice == "2":
-        print("Resume mode is exposed through scripts/train.py --resume; use it after selecting a checkpoint.")
+        print(
+            "Resume mode is exposed through scripts/train.py --resume; "
+            "use it after selecting a checkpoint."
+        )
     elif choice == "3":
         launch_chat()
     elif choice == "4":
@@ -489,8 +587,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Lapis experiment console")
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("train", help="pull, train, verify, push, then launch chat")
-    subparsers.add_parser("chat", help="launch the latest locally trained checkpoint")
+    subparsers.add_parser(
+        "train", help="pull, train, verify, push, then launch chat"
+    )
+    subparsers.add_parser(
+        "chat", help="launch the latest locally trained checkpoint"
+    )
     subparsers.add_parser("history", help="show training history")
     subparsers.add_parser("compare", help="compare two completed runs")
     subparsers.add_parser("system", help="show Git/GPU information")
