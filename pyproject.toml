@@ -33,6 +33,7 @@ train = "scripts.train:main"
 evaluate = "scripts.evaluate:main"
 generate = "scripts.generate:main"
 chat = "scripts.chat:main"
+lapis-chat = "scripts.chat:main"
 serve = "scripts.serve:main"
 
 [tool.poetry]
