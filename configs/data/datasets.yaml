@@ -11,7 +11,7 @@ sources:
     split: train
     text_fields: [text]
     license: ODC-By-1.0
-    license_url: https://opendatacommons.org/licenses/odbl/1-0/
+    license_url: https://opendatacommons.org/licenses/by/1-0/
     source_url: https://huggingface.co/datasets/HuggingFaceFW/fineweb
     estimated_scale: very_large
     default_enabled: true
@@ -24,7 +24,7 @@ sources:
     split: train
     text_fields: [text]
     license: ODC-By-1.0
-    license_url: https://opendatacommons.org/licenses/odbl/1-0/
+    license_url: https://opendatacommons.org/licenses/by/1-0/
     source_url: https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu
     estimated_scale: very_large
     default_enabled: true
@@ -50,7 +50,7 @@ sources:
     split: train
     text_fields: [text]
     license: ODC-By-1.0
-    license_url: https://opendatacommons.org/licenses/odbl/1-0/
+    license_url: https://opendatacommons.org/licenses/by/1-0/
     source_url: https://huggingface.co/datasets/allenai/dolma
     estimated_scale: extreme
     default_enabled: true
@@ -87,13 +87,13 @@ sources:
     dataset: bigcode/the-stack-v2
     config: null
     split: train
-    text_fields: [content]
+    text_fields: [files]
     license: source_specific
     license_url: https://huggingface.co/datasets/bigcode/the-stack-v2
     source_url: https://huggingface.co/datasets/bigcode/the-stack-v2
     estimated_scale: extreme
     default_enabled: true
-    notes: "Very large code corpus with external provenance requirements. Treat as opt-in for production ingestion."
+    notes: "The upstream dataset is primarily Software Heritage identifiers/metadata; content retrieval is a separate step."
 
   - id: wikipedia
     stage: pretrain
@@ -101,7 +101,7 @@ sources:
     config: 20231101.fr
     split: train
     text_fields: [text]
-    license: CC-BY-SA-3.0-or-later-and-GFDL
+    license: CC-BY-SA-3.0-and-GFDL
     license_url: https://huggingface.co/datasets/wikimedia/wikipedia
     source_url: https://huggingface.co/datasets/wikimedia/wikipedia
     estimated_scale: large
@@ -119,7 +119,7 @@ sources:
     source_url: https://huggingface.co/datasets
     estimated_scale: medium
     default_enabled: true
-    notes: "Keep this entry registry-only unless the currently available mirror exposes a stable supported config."
+    notes: "Registry entry retained, but ingestion requires a verified current mirror/config."
 
   - id: pes2o
     stage: pretrain
@@ -132,7 +132,7 @@ sources:
     source_url: https://huggingface.co/datasets/allenai/peS2o
     estimated_scale: large
     default_enabled: true
-    notes: "Scientific papers; latest dataset version is preferred. Per-document provenance should be retained."
+    notes: "Scientific papers; latest available dataset version is preferred."
 
   - id: openwebmath
     stage: pretrain
@@ -140,12 +140,12 @@ sources:
     config: null
     split: train
     text_fields: [text]
-    license: source_specific
-    license_url: https://huggingface.co/datasets/open-web-math/open-web-math
+    license: ODC-By-1.0
+    license_url: https://opendatacommons.org/licenses/by/1-0/
     source_url: https://huggingface.co/datasets/open-web-math/open-web-math
     estimated_scale: large
     default_enabled: true
-    notes: "Math-focused pretraining corpus; retain the dataset's original provenance fields."
+    notes: "Math-focused web corpus; Common Crawl Terms of Use also apply."
 
   - id: smoltalk
     stage: sft
@@ -153,8 +153,8 @@ sources:
     config: all
     split: train
     text_fields: [messages]
-    license: source_specific
-    license_url: https://huggingface.co/datasets/HuggingFaceTB/smoltalk
+    license: Apache-2.0
+    license_url: https://www.apache.org/licenses/LICENSE-2.0
     source_url: https://huggingface.co/datasets/HuggingFaceTB/smoltalk
     estimated_scale: medium
     default_enabled: true
@@ -171,7 +171,7 @@ sources:
     source_url: https://huggingface.co/datasets/teknium/OpenHermes-2.5
     estimated_scale: medium
     default_enabled: true
-    notes: "Conversation/instruction corpus; verify upstream license metadata before release."
+    notes: "Upstream states that different subsets have different licenses and the dataset includes model-generated outputs; review source links before commercial use."
 
   - id: metamathqa
     stage: sft
@@ -179,12 +179,12 @@ sources:
     config: default
     split: train
     text_fields: [query, response]
-    license: source_specific
-    license_url: https://huggingface.co/datasets/meta-math/MetaMathQA
+    license: MIT
+    license_url: https://opensource.org/license/mit/
     source_url: https://huggingface.co/datasets/meta-math/MetaMathQA
     estimated_scale: medium
     default_enabled: true
-    notes: "Math instruction data. Keep original attribution fields when available."
+    notes: "Math instruction data. Keep original attribution/provenance fields when available."
 
   - id: numinamath_cot
     stage: sft
@@ -197,7 +197,7 @@ sources:
     source_url: https://huggingface.co/datasets/AI-MO/NuminaMath-CoT
     estimated_scale: medium
     default_enabled: true
-    notes: "Math reasoning dataset. Do not train on the test split."
+    notes: "Math reasoning dataset; do not train on the test split."
 
   - id: self_oss_instruct_sc2
     stage: sft
