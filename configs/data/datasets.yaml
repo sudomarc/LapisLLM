@@ -1,0 +1,227 @@
+version: 1
+project: LapisLLM
+
+# Registry only. Raw datasets are never committed to git. The downloader
+# materializes them into data/raw/ and writes provenance manifests.
+sources:
+  - id: fineweb
+    stage: pretrain
+    dataset: HuggingFaceFW/fineweb
+    config: sample-10BT
+    split: train
+    text_fields: [text]
+    license: ODC-By-1.0
+    license_url: https://opendatacommons.org/licenses/odbl/1-0/
+    source_url: https://huggingface.co/datasets/HuggingFaceFW/fineweb
+    estimated_scale: very_large
+    default_enabled: true
+    notes: "Use a sample/config for development; the full corpus is multi-tens-of-TB scale."
+
+  - id: fineweb_edu
+    stage: pretrain
+    dataset: HuggingFaceFW/fineweb-edu
+    config: sample-10BT
+    split: train
+    text_fields: [text]
+    license: ODC-By-1.0
+    license_url: https://opendatacommons.org/licenses/odbl/1-0/
+    source_url: https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu
+    estimated_scale: very_large
+    default_enabled: true
+    notes: "Educational subset intended for higher-quality pretraining text."
+
+  - id: fineweb2
+    stage: pretrain
+    dataset: HuggingFaceFW/fineweb-2
+    config: null
+    split: train
+    text_fields: [text]
+    license: ODC-By-1.0
+    license_url: https://opendatacommons.org/licenses/by/1-0/
+    source_url: https://huggingface.co/datasets/HuggingFaceFW/fineweb-2
+    estimated_scale: extreme
+    default_enabled: true
+    notes: "Multilingual FineWeb family. Select language/script subsets explicitly for practical runs."
+
+  - id: dolma
+    stage: pretrain
+    dataset: allenai/dolma
+    config: null
+    split: train
+    text_fields: [text]
+    license: ODC-By-1.0
+    license_url: https://opendatacommons.org/licenses/odbl/1-0/
+    source_url: https://huggingface.co/datasets/allenai/dolma
+    estimated_scale: extreme
+    default_enabled: true
+    notes: "Large aggregate corpus. Avoid blindly combining with overlapping Web sources."
+
+  - id: redpajama_v2
+    stage: pretrain
+    dataset: togethercomputer/RedPajama-Data-V2
+    config: default
+    split: train
+    text_fields: [text]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/togethercomputer/RedPajama-Data-V2
+    source_url: https://huggingface.co/datasets/togethercomputer/RedPajama-Data-V2
+    estimated_scale: extreme
+    default_enabled: true
+    notes: "Source-level licensing/provenance must be retained; use as an alternative Web corpus, not an automatic duplicate."
+
+  - id: the_stack
+    stage: pretrain
+    dataset: bigcode/the-stack
+    config: null
+    split: train
+    text_fields: [content]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/bigcode/the-stack
+    source_url: https://huggingface.co/datasets/bigcode/the-stack
+    estimated_scale: very_large
+    default_enabled: true
+    notes: "Code corpus. Preserve repository/license metadata and filter to permitted licenses before training."
+
+  - id: the_stack_v2
+    stage: pretrain
+    dataset: bigcode/the-stack-v2
+    config: null
+    split: train
+    text_fields: [content]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/bigcode/the-stack-v2
+    source_url: https://huggingface.co/datasets/bigcode/the-stack-v2
+    estimated_scale: extreme
+    default_enabled: true
+    notes: "Very large code corpus with external provenance requirements. Treat as opt-in for production ingestion."
+
+  - id: wikipedia
+    stage: pretrain
+    dataset: wikimedia/wikipedia
+    config: 20231101.fr
+    split: train
+    text_fields: [text]
+    license: CC-BY-SA-3.0-or-later-and-GFDL
+    license_url: https://huggingface.co/datasets/wikimedia/wikipedia
+    source_url: https://huggingface.co/datasets/wikimedia/wikipedia
+    estimated_scale: large
+    default_enabled: true
+    notes: "Default config is French; override with another language/date explicitly."
+
+  - id: wikibooks
+    stage: pretrain
+    dataset: wikimedia/wikibooks
+    config: null
+    split: train
+    text_fields: [text]
+    license: source_specific
+    license_url: https://www.wikibooks.org/
+    source_url: https://huggingface.co/datasets
+    estimated_scale: medium
+    default_enabled: true
+    notes: "Keep this entry registry-only unless the currently available mirror exposes a stable supported config."
+
+  - id: pes2o
+    stage: pretrain
+    dataset: allenai/peS2o
+    config: null
+    split: train
+    text_fields: [text]
+    license: ODC-By
+    license_url: https://opendatacommons.org/licenses/by/1-0/
+    source_url: https://huggingface.co/datasets/allenai/peS2o
+    estimated_scale: large
+    default_enabled: true
+    notes: "Scientific papers; latest dataset version is preferred. Per-document provenance should be retained."
+
+  - id: openwebmath
+    stage: pretrain
+    dataset: open-web-math/open-web-math
+    config: null
+    split: train
+    text_fields: [text]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/open-web-math/open-web-math
+    source_url: https://huggingface.co/datasets/open-web-math/open-web-math
+    estimated_scale: large
+    default_enabled: true
+    notes: "Math-focused pretraining corpus; retain the dataset's original provenance fields."
+
+  - id: smoltalk
+    stage: sft
+    dataset: HuggingFaceTB/smoltalk
+    config: all
+    split: train
+    text_fields: [messages]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/HuggingFaceTB/smoltalk
+    source_url: https://huggingface.co/datasets/HuggingFaceTB/smoltalk
+    estimated_scale: medium
+    default_enabled: true
+    notes: "Instruction/SFT data; normalize conversational messages into Lapis format."
+
+  - id: openhermes_25
+    stage: sft
+    dataset: teknium/OpenHermes-2.5
+    config: default
+    split: train
+    text_fields: [conversations]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/teknium/OpenHermes-2.5
+    source_url: https://huggingface.co/datasets/teknium/OpenHermes-2.5
+    estimated_scale: medium
+    default_enabled: true
+    notes: "Conversation/instruction corpus; verify upstream license metadata before release."
+
+  - id: metamathqa
+    stage: sft
+    dataset: meta-math/MetaMathQA
+    config: default
+    split: train
+    text_fields: [query, response]
+    license: source_specific
+    license_url: https://huggingface.co/datasets/meta-math/MetaMathQA
+    source_url: https://huggingface.co/datasets/meta-math/MetaMathQA
+    estimated_scale: medium
+    default_enabled: true
+    notes: "Math instruction data. Keep original attribution fields when available."
+
+  - id: numinamath_cot
+    stage: sft
+    dataset: AI-MO/NuminaMath-CoT
+    config: default
+    split: train
+    text_fields: [problem, solution, messages]
+    license: Apache-2.0
+    license_url: https://www.apache.org/licenses/LICENSE-2.0
+    source_url: https://huggingface.co/datasets/AI-MO/NuminaMath-CoT
+    estimated_scale: medium
+    default_enabled: true
+    notes: "Math reasoning dataset. Do not train on the test split."
+
+  - id: self_oss_instruct_sc2
+    stage: sft
+    dataset: bigcode/self-oss-instruct-sc2-exec-filter-50k
+    config: default
+    split: train
+    text_fields: [instruction, response]
+    license: ODC-By
+    license_url: https://opendatacommons.org/licenses/by/1-0/
+    source_url: https://huggingface.co/datasets/bigcode/self-oss-instruct-sc2-exec-filter-50k
+    estimated_scale: small
+    default_enabled: true
+    notes: "Execution-validated programming instruction data."
+
+profiles:
+  all:
+    stages: [pretrain, sft]
+    include: [fineweb, fineweb_edu, fineweb2, dolma, redpajama_v2, the_stack, the_stack_v2, wikipedia, wikibooks, pes2o, openwebmath, smoltalk, openhermes_25, metamathqa, numinamath_cot, self_oss_instruct_sc2]
+    allow_source_specific_license: false
+  recommended:
+    stages: [pretrain, sft]
+    include: [fineweb, fineweb_edu, fineweb2, wikipedia, pes2o, openwebmath, the_stack, smoltalk, metamathqa, numinamath_cot, self_oss_instruct_sc2]
+    allow_source_specific_license: false
+  development:
+    stages: [pretrain, sft]
+    include: [fineweb_edu, wikipedia, smoltalk, numinamath_cot, self_oss_instruct_sc2]
+    allow_source_specific_license: false
