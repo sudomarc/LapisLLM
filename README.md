@@ -2,7 +2,7 @@
 
 **Lapis is a from-scratch decoder-only Transformer language model and training stack written in Python/PyTorch.**
 
-The project exists to make LLM engineering inspectable: tokenizer, data pipeline, Transformer architecture, optimization, checkpointing, evaluation, inference, and serving are explicit parts of the repository.
+The project is built to keep the important parts of an LLM inspectable: tokenizer, data pipeline, Transformer architecture, optimization, checkpointing, evaluation, inference, and serving.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main&label=tests)](https://github.com/sudomarc/LapisLLM/actions/workflows/tests.yml)
 [![Pages](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/static.yml?branch=main&label=website)](https://github.com/sudomarc/LapisLLM/actions/workflows/static.yml)
@@ -10,11 +10,104 @@ The project exists to make LLM engineering inspectable: tokenizer, data pipeline
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-ee4c2c)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> **Current status — Lapis 0.1.1: Correctness.** The project is experimental and is not yet a competitive pretrained foundation model. Benchmark and capability claims are intentionally withheld until reproducible validation exists.
+> **Current status — Lapis 0.1.1: Correctness.** Lapis is an experimental research/learning project, not a competitive pretrained foundation model. Benchmark and capability claims are intentionally withheld until reproducible validation exists.
 
-## Why Lapis
+## Quickstart
 
-Lapis takes a build-first approach to language models. The goal is not to hide the implementation behind a hosted endpoint or a large training framework; it is to make the mechanics understandable enough to debug, reproduce, and extend.
+Requirements: Python 3.11+ and PyTorch 2.0+.
+
+```bash
+git clone https://github.com/sudomarc/LapisLLM.git
+cd LapisLLM
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\\Scripts\\activate
+pip install -e .
+```
+
+Run the test suite:
+
+```bash
+python -m pytest
+```
+
+### Launch the chatbot directly
+
+A trained checkpoint and its tokenizer are already exposed through the repository's chat entrypoint. After the editable install, launch Lapis with:
+
+```bash
+chat
+```
+
+or, with the explicit launcher name:
+
+```bash
+lapis-chat
+```
+
+You can also run it directly from the repository without reinstalling the package:
+
+```bash
+python -m scripts.chat
+```
+
+The default runtime looks for:
+
+```text
+checkpoints/latest.pt
+checkpoints/tokenizer/
+```
+
+Those paths can be overridden when testing another model:
+
+```bash
+chat --checkpoint checkpoints/my-model.pt --device cpu
+```
+
+### Terminal interface
+
+The CLI is intentionally local-first and terminal-native. Its interface uses a compact, Claude Code-inspired layout with a model header, device/checkpoint status, streaming responses, and slash commands.
+
+Available commands inside the chat:
+
+```text
+/help   show commands
+/clear  clear the terminal and redraw the session header
+/exit   leave the chat
+```
+
+Useful generation options:
+
+```bash
+chat --max-new-tokens 128
+chat --temperature 0.7 --top-k 40 --top-p 0.95
+chat --no-color
+```
+
+The chatbot runs entirely against the selected local checkpoint. It does not require an external API key or hosted inference service.
+
+## CPU-only fast training
+
+When no accelerator is available, use the dedicated CPU profile:
+
+```bash
+python scripts/train.py --config configs/cpu-fast.yaml --device cpu --epochs 1
+```
+
+For a one-off fast run from another configuration:
+
+```bash
+python scripts/train.py --config configs/tiny.yaml --cpu-fast --epochs 1
+```
+
+`--cpu-fast` reduces model width, layer count, and context length while keeping the tokenizer vocabulary compatible with the Tiny setup. It is intended for fast iteration and smoke experiments, not final model training. It cannot be combined with `--resume` because the model architecture changes.
+
+CPU runtime settings are configurable under `runtime.cpu` (`threads`, `interop_threads`, `dataloader_workers`, and `pin_memory`). The trainer reports the effective CPU thread configuration at startup.
+
+## Model
+
+The development model is **Lapis Tiny**. Its exact instantiated parameter count is reported by the training code rather than hard-coded here.
+
+Larger configurations such as Lapis Small, Lapis 1B, Lapis 3B, and Lapis 7B are roadmap targets, not released or benchmarked models.
 
 Current model components include:
 
@@ -27,46 +120,6 @@ Current model components include:
 - ByteLevel BPE tokenization
 - PyTorch training and checkpointing
 
-## Models
-
-The development model is **Lapis Tiny**. Its current development configuration is intentionally small for local iteration. The exact instantiated parameter count is reported by the training code rather than hard-coded here.
-
-Larger configurations such as Lapis Small, Lapis 1B, Lapis 3B, and Lapis 7B are roadmap targets, not released or benchmarked models.
-
-## Quickstart
-
-Requirements: Python 3.11+ and a development installation of PyTorch.
-
-```bash
-git clone https://github.com/sudomarc/LapisLLM.git
-cd LapisLLM
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-python -m pytest
-python scripts/train.py --config configs/tiny.yaml
-```
-
-### CPU-only fast training
-
-When a Colab account or local machine has no usable accelerator, use the dedicated CPU profile instead of trying to train the larger configuration unchanged:
-
-```bash
-python scripts/train.py --config configs/cpu-fast.yaml --device cpu --epochs 1
-```
-
-For a one-off fast run from another configuration, the training entrypoint also supports:
-
-```bash
-python scripts/train.py --config configs/tiny.yaml --cpu-fast --epochs 1
-```
-
-`--cpu-fast` reduces model width, layer count, and context length while keeping the tokenizer vocabulary compatible with the Tiny setup. It is intended for fast iteration and smoke experiments, not final model training. It cannot be combined with `--resume` because the model architecture changes.
-
-CPU runtime settings are configurable under `runtime.cpu` (`threads`, `interop_threads`, `dataloader_workers`, and `pin_memory`). The trainer also reports the effective CPU thread configuration at startup.
-
-The normal `tiny.yaml` path remains available for the full configured experiment. The CPU-fast path is deliberately separate so that CPU development does not silently change the architecture of an existing training run.
-
 ## Evaluation philosophy
 
 Lapis uses evidence gates:
@@ -77,13 +130,23 @@ Lapis uses evidence gates:
 4. **Generation** — deterministic and sampling regression tests.
 5. **Scaling** — larger configurations only after the earlier stages are reproducible.
 
-No benchmark result is published in this repository until the underlying experiment is reproducible.
+No benchmark result is published until the underlying experiment is reproducible.
+
+## Serving
+
+For application integrations, Lapis also provides an OpenAI-style HTTP API:
+
+```bash
+serve --checkpoint checkpoints/latest.pt --host 127.0.0.1 --port 8000
+```
+
+The API exposes `/v1/models` and `/v1/chat/completions`.
 
 ## Skills
 
 The website includes a Lapis-native skills ecosystem for modular developer workflows. Skills are versioned packages with a normative `SKILL.md`, explicit inputs/outputs, workflow stages, limitations, and safety boundaries.
 
-Current skill catalog:
+Current catalog:
 
 - Security Audit
 - Pentest Planner
@@ -105,6 +168,7 @@ LapisLLM/
 ├── lapis/                 # model, tokenizer, data, config, training helpers
 ├── scripts/               # train, evaluate, generate, chat, serve
 ├── configs/               # reproducible YAML experiments
+├── checkpoints/           # local model checkpoints + tokenizer
 ├── tests/                 # correctness and integration tests
 ├── docs/                  # technical project documentation
 ├── website/               # static developer platform / GitHub Pages site
