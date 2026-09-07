@@ -26,6 +26,7 @@ from lapis.config.runtime_config import (
 from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
+from lapis.training.learning_monitor import DEFAULT_PROMPTS, LearningMonitor
 
 DEFAULT_CORPUS = """
 LAPIS is an independent language model research project.
@@ -268,6 +269,15 @@ def resolve_tokenizer(config: dict, corpus: str, resume_path: str | None, explic
     return load_or_train_tokenizer(config, corpus)
 
 
+def parse_monitor_prompts(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return DEFAULT_PROMPTS
+    prompts = tuple(item.strip() for item in value.split("||") if item.strip())
+    if not prompts:
+        raise ValueError("--monitor-prompts must contain at least one non-empty prompt")
+    return prompts
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train LAPIS")
     parser.add_argument("--config", default="configs/local-dev.yaml")
@@ -287,10 +297,36 @@ def main() -> None:
         default="checkpoints/latest.pt",
         help="Output checkpoint path (defaults to checkpoints/latest.pt)",
     )
+    parser.add_argument(
+        "--monitor-interval",
+        type=int,
+        default=500,
+        help="Generate learning samples every N optimizer steps (0 disables the monitor).",
+    )
+    parser.add_argument(
+        "--monitor-sample-tokens",
+        type=int,
+        default=48,
+        help="Maximum tokens generated per learning-monitor sample.",
+    )
+    parser.add_argument(
+        "--monitor-prompts",
+        default=None,
+        help="Prompts separated by || for the learning monitor.",
+    )
+    parser.add_argument(
+        "--monitor-log",
+        default=None,
+        help="JSONL monitor log path; defaults to <checkpoint-dir>/learning_monitor.jsonl.",
+    )
     args = parser.parse_args()
 
     if args.cpu_fast and args.resume:
         raise ValueError("--cpu-fast cannot resume a checkpoint with a different model architecture")
+    if args.monitor_interval < 0:
+        parser.error("--monitor-interval must be >= 0")
+    if args.monitor_sample_tokens < 1:
+        parser.error("--monitor-sample-tokens must be at least 1")
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -369,6 +405,7 @@ def main() -> None:
     epoch = 0
     accumulation_count = 0
     running_loss = 0.0
+    tokens_seen = 0
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
@@ -391,6 +428,24 @@ def main() -> None:
         restore_cuda_rng_state(checkpoint.get("cuda_rng_state"))
         print(f"Resumed from optimizer step {optimizer_step}")
 
+    monitor = None
+    if args.monitor_interval > 0:
+        checkpoint_path = Path(args.checkpoint)
+        monitor_path = Path(args.monitor_log) if args.monitor_log else checkpoint_path.parent / "learning_monitor.jsonl"
+        monitor = LearningMonitor(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            output_path=monitor_path,
+            interval=args.monitor_interval,
+            sample_tokens=args.monitor_sample_tokens,
+            prompts=parse_monitor_prompts(args.monitor_prompts),
+        )
+        print(
+            f"Learning monitor: every {args.monitor_interval} steps | "
+            f"samples={len(monitor.prompts)} | log={monitor.output_path}"
+        )
+
     model.train()
     optimizer.zero_grad(set_to_none=True)
 
@@ -402,6 +457,8 @@ def main() -> None:
                 break
             input_ids = input_ids.to(device)
             labels = labels.to(device)
+            valid_tokens = int(labels.ne(-100).sum().item())
+            tokens_seen += valid_tokens
             _, loss = model(input_ids, labels=labels)
             if loss is None or not torch.isfinite(loss):
                 raise RuntimeError("Training produced a non-finite loss")
@@ -425,13 +482,23 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
                 optimizer_step += 1
 
+                avg_loss = running_loss / max(1, accumulation_count)
                 if optimizer_step % 10 == 0 or optimizer_step == 1:
-                    avg_loss = running_loss / max(1, accumulation_count)
                     ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
                     print(
                         f"step={optimizer_step:04d} loss={avg_loss:.4f} "
                         f"ppl={ppl:.2f} lr={optimizer.param_groups[0]['lr']:.6g}"
                     )
+
+                if monitor is not None:
+                    monitor.observe(
+                        step=optimizer_step,
+                        epoch=epoch,
+                        loss=avg_loss,
+                        learning_rate=optimizer.param_groups[0]["lr"],
+                        tokens_seen=tokens_seen,
+                    )
+
                 running_loss = 0.0
                 accumulation_count = 0
 
@@ -439,6 +506,8 @@ def main() -> None:
     save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, epoch, config, tokenizer)
     print(f"Checkpoint saved: {checkpoint_path}")
     print(f"Tokenizer saved: {checkpoint_path.parent / 'tokenizer'}")
+    if monitor is not None:
+        print(f"Learning monitor log: {monitor.output_path}")
 
 
 if __name__ == "__main__":
