@@ -47,6 +47,65 @@ python -m pytest
 python scripts/train.py --config configs/tiny.yaml
 ```
 
+### Chat directly from the repository
+
+Once a checkpoint exists at `checkpoints/latest.pt`, the fastest way to start Lapis locally is:
+
+```bash
+chat
+```
+
+The same launcher is also available as:
+
+```bash
+lapis-chat
+```
+
+Or, without installing the console entry point:
+
+```bash
+python scripts/chat.py
+```
+
+The launcher automatically uses the latest checkpoint and resolves the available device. You can override it explicitly:
+
+```bash
+chat --checkpoint checkpoints/latest.pt --device auto
+chat --device cpu
+chat --device cuda
+```
+
+### Lapis Chat interface
+
+The terminal chat now uses a dependency-free interface inspired by the information density and interaction model of modern coding agents such as Claude Code: a compact session header, visible device/checkpoint state, distinct user/assistant turns, streaming generation, session commands, and immediate interruption with `Ctrl+C`. Claude Code itself is a terminal agent with an explicit gather → act → verify workflow and configurable terminal UI; Lapis uses the same usability principles without copying its implementation. citeturn0search2turn0search1
+
+Available commands inside a session:
+
+```text
+/help      Show available commands
+/clear     Clear the terminal and reset conversation history
+/stats     Show runtime generation settings
+/exit      Exit the chat
+```
+
+For a plain terminal without ANSI styling:
+
+```bash
+chat --plain
+```
+
+The chat keeps the current conversation in memory and sends the conversation back to the model on each turn. This is a local inference UI; it does not add an external model or hosted API dependency.
+
+### HTTP serving
+
+For applications that need an HTTP endpoint, use the existing OpenAI-style local server:
+
+```bash
+serve --checkpoint checkpoints/latest.pt --host 127.0.0.1 --port 8000
+```
+
+The API exposes `/v1/models` and `/v1/chat/completions`.
+
 ### CPU-only fast training
 
 When a Colab account or local machine has no usable accelerator, use the dedicated CPU profile instead of trying to train the larger configuration unchanged:
@@ -121,6 +180,8 @@ Checkpoints preserve model, optimizer, scheduler, training/configuration state, 
 ## Known limitations
 
 Lapis is an experimental research/learning project. Large-scale distributed training, mixed-precision training, efficient KV-cache generation, comprehensive benchmark evaluation, production-grade web-scale data processing, and exact mid-epoch replay are not yet complete.
+
+The current chat UI is intentionally lightweight. It is a terminal inference client, not a full IDE or agent workspace, and it does not execute shell commands or modify repository files.
 
 ## Contributing
 
