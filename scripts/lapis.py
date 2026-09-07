@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -86,21 +85,21 @@ def is_generated_path(path: str) -> bool:
     )
 
 
-def clean_generated_artifacts_before_pull(status: list[str]) -> None:
-    """Discard only known runtime-generated files before a fast-forward pull."""
+def clean_generated_artifacts(status: list[str], *, phase: str) -> None:
+    """Restore/remove only generated artifacts, never user-authored files."""
     generated = [line for line in status if is_generated_path(status_path(line))]
     protected = [line for line in status if not is_generated_path(status_path(line))]
 
     if protected:
         raise RuntimeError(
-            "Working tree has non-generated local changes. Refusing to pull:\n"
+            "Working tree has non-generated local changes. Refusing to sync:\n"
             + "\n".join(protected)
         )
 
     if not generated:
         return
 
-    print(color("Git", BOLD) + "  cleaning generated Colab artifacts before pull...")
+    print(color("Git", BOLD) + f"  cleaning generated artifacts before {phase}...")
 
     tracked = run(
         ["git", "ls-files", "--", "checkpoints", "training_data"],
@@ -112,18 +111,16 @@ def clean_generated_artifacts_before_pull(status: list[str]) -> None:
         run(["git", "restore", "--source=HEAD", "--worktree", "--", *tracked])
         print(color(f"✓ Restored {len(tracked)} tracked generated file(s)", OK))
 
+    # Remove only untracked files in the generated corpus directory.
+    # Ignored checkpoint run data is intentionally preserved.
     if TRAINING_DATA_ROOT.exists():
-        untracked_data = [
-            line for line in generated if status_path(line).replace("\\", "/").startswith("training_data/")
-        ]
-        if untracked_data:
-            shutil.rmtree(TRAINING_DATA_ROOT)
-            print(color("✓ Removed generated training_data/; it will be rebuilt", OK))
+        run(["git", "clean", "-fd", "--", "training_data"], check=False)
+        print(color("✓ Removed untracked generated training_data files", OK))
 
 
 def git_sync_pull() -> None:
     status = git_status()
-    clean_generated_artifacts_before_pull(status)
+    clean_generated_artifacts(status, phase="pull")
 
     status = git_status()
     if status:
@@ -138,6 +135,8 @@ def git_sync_pull() -> None:
 
 
 def git_sync_push(message: str) -> None:
+    status = git_status()
+    clean_generated_artifacts(status, phase="push")
     status = git_status()
     if not status:
         print(color("✓ Nothing new to push", MUTED))
