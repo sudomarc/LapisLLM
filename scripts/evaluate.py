@@ -30,7 +30,7 @@ def main() -> None:
         parser.error(f"Checkpoint not found: {checkpoint_path}")
 
     device = resolve_device(args.device)
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     tokenizer_path = checkpoint_path.parent / "tokenizer"
     if not tokenizer_path.exists():
         parser.error(f"Tokenizer directory not found: {tokenizer_path}")
