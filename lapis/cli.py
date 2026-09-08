@@ -1,9 +1,4 @@
-"""Professional Lapis command-line interface.
-
-The CLI keeps the existing scripts as the execution layer while providing a
-single, consistent terminal experience with Rich progress, status panels and
-system metrics.
-"""
+"""Professional Lapis command-line interface."""
 
 from __future__ import annotations
 
@@ -17,15 +12,10 @@ import psutil
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
+
+from lapis.ui.training_console import can_use_tui, run_training_console
 
 app = typer.Typer(
     name="lapis",
@@ -47,9 +37,7 @@ def _run(command: list[str]) -> None:
 def _max_steps(config: Path) -> int:
     text = config.read_text(encoding="utf-8")
     match = re.search(r"(?m)^\s*max_steps:\s*(\d+)\s*$", text)
-    if not match:
-        return 0
-    return int(match.group(1))
+    return int(match.group(1)) if match else 0
 
 
 def _training_command(
@@ -88,10 +76,20 @@ def train(
     checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
     epochs: int = typer.Option(1000, "--epochs", min=1),
     monitor_interval: int = typer.Option(500, "--monitor-interval", min=0),
+    no_tui: bool = typer.Option(False, "--no-tui", help="Force the legacy non-interactive renderer."),
 ) -> None:
-    """Train Lapis with a live Rich progress display."""
+    """Train Lapis with the full-screen Training Console when available."""
     total = _max_steps(REPO_ROOT / config)
     command = _training_command(config, device, data, checkpoint, epochs, monitor_interval)
+
+    if not no_tui and can_use_tui():
+        raise typer.Exit(
+            run_training_console(
+                command,
+                config=str(config),
+                checkpoint=str(checkpoint),
+            )
+        )
 
     console.print(Panel.fit(
         f"[bold]Lapis Training[/bold]\n"
