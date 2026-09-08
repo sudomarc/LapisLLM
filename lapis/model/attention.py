@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from lapis.model.rope import apply_rotary_pos_emb, precompute_freqs_cis
 
@@ -63,15 +64,19 @@ class CausalSelfAttention(nn.Module):
         k = self._repeat_kv(k, repeats)
         v = self._repeat_kv(v, repeats)
 
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        # PyTorch's SDPA can dispatch to optimized kernels while retaining the
+        # standard dense attention semantics. In a caller-provided boolean mask,
+        # True means "masked"; SDPA boolean masks use True to mean "keep".
         if mask is None:
-            mask = torch.triu(
-                torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool),
-                diagonal=1,
+            output = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            keep_mask = ~mask.to(dtype=torch.bool, device=x.device)
+            output = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=keep_mask.view(1, 1, seq_len, seq_len),
             )
-        scores = scores.masked_fill(mask.view(1, 1, seq_len, seq_len), float("-inf"))
 
-        weights = torch.softmax(scores, dim=-1)
-        output = torch.matmul(weights, v)
         output = output.transpose(1, 2).contiguous().view(batch, seq_len, self.hidden_size)
         return self.o_proj(output)
