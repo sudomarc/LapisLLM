@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 data = [
-    "datasets>=3.0.0",
+    "datasets>=5.0.1",
     "requests>=2.31.0",
 ]
 dev = [
