@@ -23,6 +23,9 @@ DEFAULT_SOURCES = (
     ("openwebmath", "open-web-math/open-web-math", None, "train", "text"),
 )
 
+PROGRESS_EVERY_RECORDS = 250
+PROGRESS_EVERY_SECONDS = 5.0
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a bounded LapisLLM Colab corpus")
@@ -52,6 +55,39 @@ def load_kwargs(dataset_id: str, config: str | None, split: str) -> dict[str, An
     return kwargs
 
 
+def format_size(value: int) -> str:
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(value)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:,.1f} {unit}"
+        size /= 1024
+    return f"{value:,} B"
+
+
+def print_progress(
+    *,
+    source_id: str,
+    source_records: int,
+    source_chars: int,
+    total_chars: int,
+    max_chars: int,
+    started: float,
+) -> None:
+    elapsed = max(0.001, time.monotonic() - started)
+    percent = min(100.0, (total_chars / max_chars) * 100) if max_chars else 100.0
+    chars_per_sec = total_chars / elapsed
+    remaining_chars = max(0, max_chars - total_chars)
+    eta = remaining_chars / chars_per_sec if chars_per_sec > 0 else 0.0
+    print(
+        f"[CORPUS] {percent:6.2f}% | {format_size(total_chars)} / "
+        f"{format_size(max_chars)} | source={source_id} | "
+        f"records={source_records:,} | source_chars={format_size(source_chars)} | "
+        f"speed={format_size(int(chars_per_sec))}/s | ETA={eta / 60:.1f} min",
+        flush=True,
+    )
+
+
 def main() -> int:
     args = parse_args()
     output = Path(args.output)
@@ -62,14 +98,30 @@ def main() -> int:
     total_chars = 0
     source_stats = []
     seen_sources = []
+    started = time.monotonic()
+
+    print(
+        f"[CORPUS] Starting | target={format_size(args.max_chars)} | "
+        f"sources={', '.join(item[0] for item in selected_sources(args))}",
+        flush=True,
+    )
 
     with output.open("w", encoding="utf-8", newline="\n") as handle:
         for source_id, dataset_id, config, split, field in selected_sources(args):
             if total_chars >= args.max_chars:
                 break
+
+            source_started = time.monotonic()
+            print(
+                f"[CORPUS] Loading source: {source_id} "
+                f"({dataset_id}, config={config or 'default'}, split={split})",
+                flush=True,
+            )
             dataset = load_dataset(**load_kwargs(dataset_id, config, split))
             records = 0
             chars = 0
+            last_progress = source_started
+
             for row in dataset:
                 value = row.get(field) if isinstance(row, dict) else None
                 if not isinstance(value, str):
@@ -88,18 +140,46 @@ def main() -> int:
                 total_chars += written
                 chars += written
                 records += 1
+
+                now = time.monotonic()
+                if (
+                    records % PROGRESS_EVERY_RECORDS == 0
+                    or now - last_progress >= PROGRESS_EVERY_SECONDS
+                ):
+                    print_progress(
+                        source_id=source_id,
+                        source_records=records,
+                        source_chars=chars,
+                        total_chars=total_chars,
+                        max_chars=args.max_chars,
+                        started=started,
+                    )
+                    last_progress = now
+
                 if args.max_records_per_source and records >= args.max_records_per_source:
                     break
-            source_stats.append({
-                "id": source_id,
-                "dataset": dataset_id,
-                "config": config,
-                "split": split,
-                "field": field,
-                "records_written": records,
-                "chars_written": chars,
-            })
+
+            source_stats.append(
+                {
+                    "id": source_id,
+                    "dataset": dataset_id,
+                    "config": config,
+                    "split": split,
+                    "field": field,
+                    "records_written": records,
+                    "chars_written": chars,
+                }
+            )
             seen_sources.append(source_id)
+            print_progress(
+                source_id=source_id,
+                source_records=records,
+                source_chars=chars,
+                total_chars=total_chars,
+                max_chars=args.max_chars,
+                started=started,
+            )
+            print(f"[CORPUS] Completed source: {source_id}", flush=True)
 
     manifest = {
         "project": "LapisLLM",
@@ -111,9 +191,17 @@ def main() -> int:
         "source_order": seen_sources,
         "output": str(output),
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Corpus: {output} ({total_chars:,} chars)")
-    print(f"Manifest: {manifest_path}")
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    elapsed = time.monotonic() - started
+    print(
+        f"[CORPUS] DONE | {format_size(total_chars)} | "
+        f"elapsed={elapsed / 60:.1f} min | output={output}",
+        flush=True,
+    )
+    print(f"Manifest: {manifest_path}", flush=True)
     return 0
 
 
