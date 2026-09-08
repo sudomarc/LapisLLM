@@ -17,7 +17,7 @@ Build the tokenizer. Build the Transformer. Train it. Inspect what it learns.
 </div>
 
 > [!IMPORTANT]
-> **Project status — Lapis 0.1.1.** Lapis is an experimental research and learning project. It is designed for transparency, reproducibility, and engineering practice; it is **not** presented as a competitive pretrained foundation model. Capability and benchmark claims are intentionally withheld until reproducible evaluation exists.
+> **Project status — Lapis 0.2.0.** Lapis is an experimental research and learning project. It is designed for transparency, reproducibility, and engineering practice; it is **not** presented as a competitive pretrained foundation model. Capability and benchmark claims are intentionally withheld until reproducible evaluation exists.
 
 ## Overview
 
