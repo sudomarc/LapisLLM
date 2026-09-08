@@ -18,18 +18,12 @@ from rich.table import Table
 from lapis.dev.cli import app as dev_app
 from lapis.ui.training_console import can_use_tui, run_training_console
 
-app = typer.Typer(
-    name="lapis",
-    help="Lapis language-model platform: simple user inference with an explicit developer mode.",
-    no_args_is_help=False,
-    rich_markup_mode="rich",
-)
+app = typer.Typer(name="lapis", help="Lapis language-model platform: simple user inference with an explicit developer mode.", no_args_is_help=False, rich_markup_mode="rich")
 console = Console()
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run(command: list[str]) -> None:
-    """Run an existing Lapis script and preserve its exit status."""
     result = subprocess.run(command, cwd=REPO_ROOT)
     if result.returncode:
         raise typer.Exit(result.returncode)
@@ -57,19 +51,11 @@ def main_callback(ctx: typer.Context) -> None:
         chat()
 
 
-@app.add_typer(dev_app, name="dev")
+app.add_typer(dev_app, name="dev")
 
 
 @app.command("train")
-def train(
-    config: Path = typer.Option(Path("configs/local-dev.yaml"), "--config", "-c"),
-    device: str | None = typer.Option(None, "--device"),
-    data: Path | None = typer.Option(None, "--data"),
-    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
-    epochs: int = typer.Option(1000, "--epochs", min=1),
-    monitor_interval: int = typer.Option(500, "--monitor-interval", min=0),
-    no_tui: bool = typer.Option(False, "--no-tui", help="Force the legacy non-interactive renderer."),
-) -> None:
+def train(config: Path = typer.Option(Path("configs/local-dev.yaml"), "--config", "-c"), device: str | None = typer.Option(None, "--device"), data: Path | None = typer.Option(None, "--data"), checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), epochs: int = typer.Option(1000, "--epochs", min=1), monitor_interval: int = typer.Option(500, "--monitor-interval", min=0), no_tui: bool = typer.Option(False, "--no-tui", help="Force the legacy non-interactive renderer.")) -> None:
     """Legacy training command. Prefer ``lapis dev train`` for new usage."""
     total = _max_steps(REPO_ROOT / config)
     command = _training_command(config, device, data, checkpoint, epochs, monitor_interval)
@@ -77,11 +63,10 @@ def train(
         raise typer.Exit(run_training_console(command, config=str(config), checkpoint=str(checkpoint)))
     console.print(Panel.fit(f"[bold]Lapis Training[/bold]\nConfig: {config}\nDevice: {device or 'auto'}\nCheckpoint: {checkpoint}", border_style="bright_blue"))
     progress = Progress(SpinnerColumn(), TextColumn("[bold blue]{task.description}"), BarColumn(), TaskProgressColumn(), TextColumn("loss {task.fields[loss]}"), TextColumn("step {task.completed}/{task.total}"), TimeRemainingColumn(), console=console)
-    task_total = total if total > 0 else None
     started = time.monotonic()
     last_lines: list[str] = []
     with progress:
-        task = progress.add_task("training", total=task_total, loss="--")
+        task = progress.add_task("training", total=total if total > 0 else None, loss="--")
         process = subprocess.Popen(command, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         assert process.stdout is not None
         for raw_line in process.stdout:
@@ -96,23 +81,14 @@ def train(
             elif "Checkpoint saved:" in line:
                 progress.update(task, description="saving checkpoint")
         return_code = process.wait()
-    elapsed = time.monotonic() - started
     if return_code:
         console.print(Panel("\n".join(last_lines) or "Training failed.", title="Training failed", border_style="red"))
         raise typer.Exit(return_code)
-    console.print(Panel.fit(f"[bold green]Training complete[/bold green]\nElapsed: {elapsed:.1f}s\nCheckpoint: {checkpoint}", border_style="green"))
+    console.print(Panel.fit(f"[bold green]Training complete[/bold green]\nElapsed: {time.monotonic() - started:.1f}s\nCheckpoint: {checkpoint}", border_style="green"))
 
 
 @app.command("generate")
-def generate(
-    prompt: str = typer.Argument(..., help="Prompt to generate from."),
-    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
-    max_new_tokens: int = typer.Option(64, "--max-new-tokens", min=1),
-    temperature: float = typer.Option(0.8, "--temperature", min=0.01),
-    top_k: int = typer.Option(40, "--top-k", min=0),
-    top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
-    device: str = typer.Option("auto", "--device"),
-) -> None:
+def generate(prompt: str = typer.Argument(...), checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), max_new_tokens: int = typer.Option(64, "--max-new-tokens", min=1), temperature: float = typer.Option(0.8, "--temperature", min=0.01), top_k: int = typer.Option(40, "--top-k", min=0), top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0), device: str = typer.Option("auto", "--device")) -> None:
     """Legacy direct generation command."""
     _run([sys.executable, "-m", "scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device])
 
