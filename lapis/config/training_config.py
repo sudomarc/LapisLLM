@@ -26,8 +26,26 @@ class TrainingConfig:
             raise ValueError("learning_rate must be finite and positive")
         if not math.isfinite(self.weight_decay) or self.weight_decay < 0:
             raise ValueError("weight_decay must be finite and non-negative")
+        if self.warmup_steps < 0:
+            raise ValueError("warmup_steps must be non-negative")
+        if self.max_steps < 1:
+            raise ValueError("max_steps must be at least 1")
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        if self.micro_batch_size < 1:
+            raise ValueError("micro_batch_size must be at least 1")
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError("gradient_accumulation_steps must be at least 1")
         if not math.isfinite(self.gradient_clip) or self.gradient_clip <= 0:
             raise ValueError("gradient_clip must be finite and positive")
+
+        effective_batch_size = self.get_effective_batch_size()
+        if self.batch_size != effective_batch_size:
+            raise ValueError(
+                "batch_size must equal micro_batch_size * gradient_accumulation_steps "
+                f"({self.micro_batch_size} * {self.gradient_accumulation_steps} = "
+                f"{effective_batch_size}, got {self.batch_size})"
+            )
 
     def get_effective_batch_size(self):
         return self.micro_batch_size * self.gradient_accumulation_steps
