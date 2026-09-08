@@ -1,83 +1,47 @@
-# LapisLLM — first Colab GPU training run
+# LapisLLM — Colab GPU training
 
-This is the supported path for the first bounded GPU pretraining run. It uses
-`configs/colab.yaml`, streams a small set of pretraining sources, records provenance,
-and writes the checkpoint locally in the Colab runtime.
+Use a GPU runtime in Google Colab.
 
-## 1. Start Colab with GPU
-
-In **Runtime → Change runtime type**, select a GPU runtime.
-
-## 2. Clone and install
+## Quick start
 
 ```python
 !git clone https://github.com/sudomarc/LapisLLM.git
+```
+
+```python
 %cd LapisLLM
-!pip install -e '.[data]'
-!nvidia-smi
 ```
-
-## 3. Build the bounded corpus
-
-The first run uses FineWeb-Edu, French Wikipedia, and OpenWebMath. The builder streams
-the sources and caps the combined corpus instead of downloading the full datasets.
 
 ```python
-!python scripts/build_colab_corpus.py \
-  --output training_data/colab_pretrain.txt \
-  --manifest training_data/colab_pretrain_manifest.json \
-  --max-chars 200000000
+!python scripts/colab_train.py
 ```
 
-For a smoke test before the full run:
+The script installs the project dependencies, checks CUDA, builds the bounded
+pretraining corpus, and launches the training job with `configs/colab.yaml`.
+
+## Smoke test
+
+Use a small corpus before the full run:
 
 ```python
-!python scripts/build_colab_corpus.py --max-chars 5000000
+!python scripts/colab_train.py --smoke-test
 ```
 
-## 4. Train the model
+## Resume
 
 ```python
-!python -m lapis.dev.cli train \
-  --config configs/colab.yaml \
-  --device cuda \
-  --data training_data/colab_pretrain.txt \
-  --checkpoint checkpoints/colab-pretrain.pt \
-  --epochs 1 \
-  --monitor-interval 250
+!python scripts/colab_train.py --resume
 ```
 
-The trainer owns tokenizer creation for a fresh run and stores the tokenizer next to
-the checkpoint. The Colab profile uses a larger model than `local-dev.yaml` and FP16 on
-CUDA.
-
-## 5. Resume
+## Limit corpus size
 
 ```python
-!python scripts/train.py \
-  --config configs/colab.yaml \
-  --device cuda \
-  --data training_data/colab_pretrain.txt \
-  --resume checkpoints/colab-pretrain.pt \
-  --checkpoint checkpoints/colab-pretrain.pt \
-  --epochs 1
+!python scripts/colab_train.py --max-chars 50000000
 ```
 
-## 6. Inspect and generate
+## Output
 
-```python
-!python -m lapis.dev.cli inspect --checkpoint checkpoints/colab-pretrain.pt
-!python -m lapis.dev.cli generate \
-  --checkpoint checkpoints/colab-pretrain.pt \
-  --device cuda \
-  --max-new-tokens 128 \
-  'The future of artificial intelligence is'
-```
+The runner writes the corpus and provenance manifest under `training_data/` and
+the trained checkpoint under `checkpoints/`.
 
-## Notes
-
-The corpus is deliberately bounded for a first Colab run. Increase the corpus size,
-training steps, sequence length, or model size only after the complete pipeline is
-stable and the checkpoint can be resumed successfully.
-
-Do not commit `training_data/`, `data/raw/`, checkpoints, or tokenizer artifacts.
+Do not commit generated training data, checkpoints, or tokenizer artifacts.
