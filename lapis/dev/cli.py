@@ -18,7 +18,7 @@ from rich.table import Table
 
 from lapis.inference.runtime import LapisRuntime, SamplingConfig
 
-app = typer.Typer(name="dev", help="Developer tools: train, evaluate, benchmark, inspect, checkpoint.")
+app = typer.Typer(name="dev", help="Developer commands.")
 console = Console()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
