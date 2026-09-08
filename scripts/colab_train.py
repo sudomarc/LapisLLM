@@ -9,7 +9,6 @@ The actual optimizer loop remains in ``scripts.train``.
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import re
@@ -88,15 +87,6 @@ def get_github_token() -> str | None:
     return None
 
 
-def git_env(token: str | None) -> dict[str, str]:
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    if token:
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GIT_ASKPASS"] = str(ROOT / ".git-askpass-colab")
-    return env
-
-
 def run_command(command: list[str], *, label: str | None = None) -> None:
     if label:
         phase(label, "START")
@@ -110,11 +100,8 @@ def run_command(command: list[str], *, label: str | None = None) -> None:
 
 def ensure_dependencies() -> None:
     required = ("torch", "yaml", "datasets", "tokenizers", "typer")
-    missing = []
     import importlib.util
-    for name in required:
-        if importlib.util.find_spec(name) is None:
-            missing.append(name)
+    missing = [name for name in required if importlib.util.find_spec(name) is None]
     if not missing:
         phase("DEPENDENCIES", "COMPLETE | required packages already installed")
         return
@@ -146,7 +133,7 @@ def corpus_valid() -> bool:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return int(manifest.get("actual_chars", 0)) > 0 and manifest.get("output")
+    return int(manifest.get("actual_chars", 0)) > 0 and bool(manifest.get("output"))
 
 
 def prepare_corpus(args: argparse.Namespace) -> None:
@@ -233,6 +220,8 @@ def monitor_child(
             last_output = now
             metric = METRIC_RE.search(line)
             token_match = TOKEN_RE.search(line)
+            if token_match:
+                latest["tokens"] = float(token_match.group("tokens").replace(",", ""))
             if metric:
                 latest["step"] = float(metric.group("step"))
                 latest["loss"] = float(metric.group("loss"))
@@ -245,8 +234,14 @@ def monitor_child(
                 tokens = int(latest["tokens"])
                 token_speed = tokens / elapsed if tokens else 0.0
                 phase("TRAINING", f"run={run_number}/{total_runs} | step={int(latest['step']):,}/{target_steps:,} | progress={latest['step'] / target_steps * 100:.2f}% | loss={latest['loss']:.4f} | ppl={latest['ppl']:.2f} | lr={latest['lr']:.6g} | tokens={tokens:,} | tok/s={token_speed:,.0f}" + (f" | ETA={format_duration(eta)}" if eta is not None else ""))
-            if token_match:
-                latest["tokens"] = float(token_match.group("tokens").replace(",", ""))
+            if "Tokenizer:" in line:
+                phase("TOKENIZER", "COMPLETE | trainer reported tokenizer ready")
+            if "Tokens:" in line and "dataset samples" in line:
+                phase("DATASET", "COMPLETE | trainer reported token count and dataset samples")
+            if "Parameters:" in line:
+                phase("MODEL", "READY | trainer reported parameter count")
+            if "Checkpoint saved:" in line:
+                phase("CHECKPOINT", "SAVED | trainer reported checkpoint write complete")
     finally:
         stop.set()
         thread.join(timeout=max(1.0, heartbeat_seconds))
@@ -258,7 +253,8 @@ def monitor_child(
 
 
 def target_steps(config: Path) -> int:
-    data = json.loads(json.dumps(__import__("yaml").safe_load(config.read_text(encoding="utf-8"))))
+    import yaml
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
     steps = int(data["training"]["max_steps"])
     if steps < 1:
         raise ValueError("training.max_steps must be >= 1")
@@ -304,14 +300,7 @@ def generate_preview(checkpoint: Path, device: str, prompts: tuple[str, ...]) ->
     phase("CHATBOT PREVIEW", "START")
     samples: list[dict[str, str]] = []
     for prompt in prompts:
-        command = [
-            sys.executable,
-            "scripts/generate.py",
-            "--checkpoint", str(checkpoint.relative_to(ROOT)),
-            "--prompt", prompt,
-            "--max-new-tokens", "32",
-            "--device", device,
-        ]
+        command = [sys.executable, "scripts/generate.py", "--checkpoint", str(checkpoint.relative_to(ROOT)), "--prompt", prompt, "--max-new-tokens", "32", "--device", device]
         result = subprocess.run(command, cwd=ROOT, env={**os.environ, "PYTHONUNBUFFERED": "1"}, text=True, capture_output=True, check=True)
         completion = result.stdout.strip()
         print(f"\nPrompt: {prompt}\nLapisLLM: {completion or '<EMPTY>'}", flush=True)
@@ -326,21 +315,13 @@ def write_history(run_number: int, total_runs: int, checkpoint: Path, metrics: d
     run_dir.mkdir(parents=True, exist_ok=True)
     duration = time.monotonic() - started
     summary = {
-        "run_id": run_id,
-        "run_number": run_number,
-        "total_runs": total_runs,
-        "status": "completed",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "steps": int(metrics.get("step", 0)),
-        "loss": metrics.get("loss"),
-        "perplexity": metrics.get("ppl"),
-        "learning_rate": metrics.get("lr"),
-        "tokens_seen": int(metrics.get("tokens", 0)),
-        "duration_seconds": duration,
-        "device": metrics.get("device", "unknown"),
-        "checkpoint_path": str(checkpoint),
-        "checkpoint_size_bytes": checkpoint.stat().st_size,
-        "config": str(config),
+        "run_id": run_id, "run_number": run_number, "total_runs": total_runs,
+        "status": "completed", "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "steps": int(metrics.get("step", 0)), "loss": metrics.get("loss"),
+        "perplexity": metrics.get("ppl"), "learning_rate": metrics.get("lr"),
+        "tokens_seen": int(metrics.get("tokens", 0)), "duration_seconds": duration,
+        "device": metrics.get("device", "unknown"), "checkpoint_path": str(checkpoint),
+        "checkpoint_size_bytes": checkpoint.stat().st_size, "config": str(config),
         "dataset_manifest": str(MANIFEST),
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -364,15 +345,10 @@ def train_one_run(run_number: int, total_runs: int, args: argparse.Namespace, de
     phase("TRAINING", "START")
 
     command = [
-        sys.executable,
-        "-m", "lapis.dev.cli", "train",
-        "--config", str(config.relative_to(ROOT)),
-        "--data", str(CORPUS.relative_to(ROOT)),
-        "--checkpoint", str(checkpoint.relative_to(ROOT)),
-        "--device", device,
-        "--epochs", "1000",
-        "--monitor-interval", str(args.monitor_interval),
-        "--monitor-sample-tokens", str(args.monitor_sample_tokens),
+        sys.executable, "-m", "lapis.dev.cli", "train",
+        "--config", str(config.relative_to(ROOT)), "--data", str(CORPUS.relative_to(ROOT)),
+        "--checkpoint", str(checkpoint.relative_to(ROOT)), "--device", device, "--epochs", "1000",
+        "--monitor-interval", str(args.monitor_interval), "--monitor-sample-tokens", str(args.monitor_sample_tokens),
         "--monitor-log", str(monitor_log.relative_to(ROOT)),
     ]
     if args.monitor_prompts:
@@ -404,7 +380,7 @@ def git_push(token: str | None, smoke: bool) -> bool:
     banner("GITHUB")
     phase("GITHUB", "[1/4] Preparing history...")
     status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT, text=True, capture_output=True, check=True).stdout.splitlines()
-    protected = [line for line in status if not line[3:].lstrip().replace("\\", "/").startswith("training_history/")]
+    protected = [line for line in status if line[3:].lstrip().replace("\\", "/") and not line[3:].lstrip().replace("\\", "/").startswith("training_history/")]
     if protected:
         raise RuntimeError("Refusing GitHub push because unrelated local changes exist:\n" + "\n".join(protected))
     subprocess.run(["git", "add", "training_history"], cwd=ROOT, check=True)
@@ -453,6 +429,7 @@ def main() -> int:
     ensure_dependencies()
     device = check_gpu(args.device)
     prepare_corpus(args)
+    phase("INITIALIZATION", "COMPLETE")
 
     runs = args.runs if args.runs is not None else int(input("How many runs? [1] ").strip() or "1")
     completed = completed_run_numbers() if args.resume else set()
@@ -467,23 +444,36 @@ def main() -> int:
         summaries.append(train_one_run(run_number, runs, args, device, config))
 
     banner("FINAL SUMMARY")
-    all_completed = sorted(completed_run_numbers() | set(remaining))
+    completed_summaries = []
+    for summary_file in sorted(HISTORY.glob("run-*/summary.json")):
+        try:
+            data = json.loads(summary_file.read_text(encoding="utf-8"))
+            if data.get("status") == "completed" and int(data.get("run_number", 0)) <= runs:
+                completed_summaries.append(data)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
     print(f"GPU              : {device}", flush=True)
     print(f"Runs requested   : {runs}", flush=True)
-    print(f"Runs completed   : {len([n for n in all_completed if n <= runs])}", flush=True)
-    if summaries:
-        print(f"Final loss       : {summaries[-1].get('loss')}", flush=True)
-        print(f"Final ppl        : {summaries[-1].get('ppl')}", flush=True)
-        print(f"Tokens seen      : {int(summaries[-1].get('tokens', 0)):,}", flush=True)
+    print(f"Runs completed   : {len(completed_summaries)}", flush=True)
+    if completed_summaries:
+        initial = completed_summaries[0]
+        final = completed_summaries[-1]
+        best = min(completed_summaries, key=lambda item: float(item.get("loss", "inf")))
+        print(f"Initial loss     : {initial.get('loss')}", flush=True)
+        print(f"Final loss       : {final.get('loss')}", flush=True)
+        print(f"Initial ppl      : {initial.get('perplexity')}", flush=True)
+        print(f"Final ppl        : {final.get('perplexity')}", flush=True)
+        print(f"Tokens seen      : {int(final.get('tokens_seen', 0)):,}", flush=True)
+        print(f"Best run         : {best.get('run_number')}", flush=True)
     print(f"History          : {HISTORY}", flush=True)
     if remaining:
         print(f"Latest checkpoint: {CHECKPOINTS / f'run-{remaining[-1]:03d}' / 'checkpoint.pt'}", flush=True)
-    if not args.no_push:
+    if args.no_push:
+        phase("GITHUB", "SKIPPED | --no-push")
+    else:
         token = get_github_token()
         phase("GITHUB", "AUTHENTICATION READY" if token else "AUTHENTICATION | using existing Git credentials")
         git_push(token, args.smoke_test)
-    else:
-        phase("GITHUB", "SKIPPED | --no-push")
     banner("LAPISLLM TRAINING COMPLETE")
     return 0
 
