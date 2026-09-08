@@ -127,7 +127,7 @@ def main() -> None:
         parser.error(f"Checkpoint not found: {checkpoint}")
 
     device = resolve_device(args.device)
-    checkpoint_data = torch.load(checkpoint, map_location=device, weights_only=False)
+    checkpoint_data = torch.load(checkpoint, map_location=device, weights_only=True)
 
     tokenizer_dir = (
         Path(args.tokenizer)
