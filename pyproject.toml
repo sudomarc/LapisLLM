@@ -8,7 +8,7 @@ version = "0.1.1"
 description = "LAPIS language model and training stack from scratch"
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.14.0",
+    "torch>=2.11.0,<3.0.0",
     "pydantic>=2.13.5",
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
