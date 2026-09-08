@@ -37,7 +37,7 @@ def load_runtime(checkpoint_path: str, device: torch.device):
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
 
-    checkpoint = torch.load(path, map_location=device, weights_only=False)
+    checkpoint = torch.load(path, map_location=device, weights_only=True)
     tokenizer_path = path.parent / "tokenizer"
     if not tokenizer_path.exists():
         raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
