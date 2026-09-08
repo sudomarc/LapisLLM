@@ -49,7 +49,7 @@ def load_chat_model(checkpoint_path: Path, device: torch.device) -> tuple[LapisM
             f"Tokenizer not found: {tokenizer_path}. A checkpoint must ship with its tokenizer."
         )
 
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     tokenizer = Tokenizer.load(str(tokenizer_path))
     validate_checkpoint_tokenizer(checkpoint, tokenizer)
     model = LapisModel(**model_config_kwargs(checkpoint["config"])).to(device)
@@ -331,7 +331,6 @@ def main() -> None:
             print(paint(f"✓ Conversation saved to {target}", SUCCESS, color))
             continue
 
-        # Keep the prompt inside the model context window. Prefer recent turns.
         messages.append(("user", user_input))
         prompt = build_prompt(messages)
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
