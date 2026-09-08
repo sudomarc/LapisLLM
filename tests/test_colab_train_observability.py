@@ -19,7 +19,7 @@ def test_training_metric_regex_extracts_live_metrics() -> None:
     assert int(token_match.group("tokens").replace(",", "")) == 1_280_000
 
 
-def test_completed_run_numbers_require_explicit_completed_status(
+def test_completed_run_numbers_ignore_failed_runs_and_keep_legacy_history(
     tmp_path: Path, monkeypatch
 ) -> None:
     history = tmp_path / "training_history"
@@ -36,7 +36,7 @@ def test_completed_run_numbers_require_explicit_completed_status(
         json.dumps({"run_number": 3})
     )
     monkeypatch.setattr(colab_train, "HISTORY", history)
-    assert colab_train.completed_run_numbers() == {1}
+    assert colab_train.completed_run_numbers() == {1, 3}
 
 
 def test_format_duration_is_stable() -> None:
