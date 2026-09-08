@@ -2,6 +2,20 @@
 
 All notable changes to LapisLLM are documented here.
 
+## [Unreleased] - 2026-09-08
+
+### Fixed
+
+- Isolated dependency and secret audits into a dedicated CI security job so test/lint failures cannot suppress security checks.
+- Scoped GitHub Pages write and OIDC permissions to the deployment job only.
+- Updated the website workflow to Node.js 24.
+- Moved `pytest` and `ruff` to the development extra instead of requiring them for runtime installs.
+
+### Notes
+
+- The obsolete training-console implementation from PR #11 was not merged because `main` now uses the USER/DEV runtime split and its compatibility wrapper; the old `training_console_fixed.py` replacement would regress that architecture.
+- Checkpoint loading paths that still require `weights_only=False` for training resume/validation remain explicitly tracked for a separate compatibility migration rather than being hidden by CI rules.
+
 ## [0.1.1] - 2026-09-06
 
 ### Added
