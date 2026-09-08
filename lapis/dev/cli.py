@@ -1,0 +1,114 @@
+"""Developer command namespace.
+
+All commands here are explicitly opt-in through ``lapis dev``. Legacy top-level
+commands remain available for compatibility but are not the default UX.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import torch
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from lapis.inference.runtime import LapisRuntime, SamplingConfig
+
+app = typer.Typer(name="dev", help="Developer tools: train, evaluate, benchmark, inspect, checkpoint.")
+console = Console()
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _run(module: str, *args: str) -> None:
+    result = subprocess.run([sys.executable, "-m", module, *args], cwd=REPO_ROOT)
+    raise typer.Exit(result.returncode)
+
+
+@app.command("train")
+def train(
+    config: Path = typer.Option(Path("configs/local-dev.yaml"), "--config", "-c"),
+    device: str | None = typer.Option(None, "--device"),
+    data: Path | None = typer.Option(None, "--data"),
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    epochs: int = typer.Option(1000, "--epochs", min=1),
+    monitor_interval: int = typer.Option(500, "--monitor-interval", min=0),
+    no_tui: bool = typer.Option(False, "--no-tui"),
+) -> None:
+    args = ["--config", str(config), "--epochs", str(epochs), "--checkpoint", str(checkpoint), "--monitor-interval", str(monitor_interval)]
+    if device:
+        args += ["--device", device]
+    if data:
+        args += ["--data", str(data)]
+    if no_tui:
+        args += ["--no-tui"]
+    _run("scripts.train", *args)
+
+
+@app.command("evaluate")
+def evaluate(
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    _run("scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device)
+
+
+@app.command("generate")
+def generate(
+    prompt: str = typer.Argument(...),
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    max_new_tokens: int = typer.Option(64, "--max-new-tokens", min=1),
+    temperature: float = typer.Option(0.8, "--temperature", min=0.01),
+    top_k: int = typer.Option(40, "--top-k", min=0),
+    top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    _run("scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device)
+
+
+@app.command("inspect")
+def inspect(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint")) -> None:
+    """Inspect checkpoint metadata without modifying it or starting training."""
+    if not checkpoint.is_file():
+        raise typer.BadParameter(f"Checkpoint not found: {checkpoint}")
+    try:
+        data = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise typer.BadParameter(f"Unable to read checkpoint: {exc}") from exc
+    config = data.get("config", {})
+    model = config.get("model", {})
+    table = Table(title=f"Checkpoint: {checkpoint}")
+    table.add_column("Field")
+    table.add_column("Value")
+    for key, value in (("step", data.get("step", "—")), ("epoch", data.get("epoch", "—")), ("tokenizer_version", data.get("tokenizer_version", "—")), ("vocab_size", model.get("vocab_size", "—")), ("layers", model.get("num_layers", "—")), ("hidden_size", model.get("hidden_size", "—"))):
+        table.add_row(key, str(value))
+    console.print(table)
+
+
+@app.command("benchmark")
+def benchmark(
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    prompt: str = typer.Option("The future of computing is", "--prompt"),
+    tokens: int = typer.Option(32, "--tokens", min=1),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    """Measure inference throughput without changing the checkpoint."""
+    runtime = LapisRuntime.from_checkpoint(checkpoint, device)
+    started = time.perf_counter()
+    text = runtime.generate(prompt, SamplingConfig(max_new_tokens=tokens))
+    elapsed = time.perf_counter() - started
+    rate = tokens / elapsed if elapsed > 0 else 0.0
+    console.print(f"device={runtime.device} tokens={tokens} elapsed={elapsed:.3f}s tok/s={rate:.1f}")
+    console.print(text)
+
+
+checkpoint_app = typer.Typer(name="checkpoint", help="Checkpoint inspection and validation tools.")
+app.add_typer(checkpoint_app, name="checkpoint")
+
+
+@checkpoint_app.command("inspect")
+def checkpoint_inspect(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint")) -> None:
+    inspect(checkpoint)
