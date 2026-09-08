@@ -6,10 +6,11 @@ from lapis.cli import app
 def test_cli_help() -> None:
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "Lapis language-model training and inference CLI" in result.stdout
-    assert "train" in result.stdout
-    assert "generate" in result.stdout
+    assert "simple user inference" in result.stdout
+    assert "chat" in result.stdout
+    assert "dev" in result.stdout
     assert "system" in result.stdout
+    assert "train" not in result.stdout
 
 
 def test_system_command() -> None:
