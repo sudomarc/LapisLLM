@@ -1,0 +1,38 @@
+{
+  "run_id": "run-20260907-234116-1",
+  "run_number": 1,
+  "timestamp_utc": "20260907-234116",
+  "config": "configs/tiny.yaml",
+  "corpus": "training_data/combined.txt",
+  "device": "cuda",
+  "seed": 42,
+  "target_steps": 10000,
+  "recorded_step": 10000,
+  "checkpoint": "checkpoints/colab-runs/run-20260907-234116-1/checkpoint.pt",
+  "checkpoint_size_bytes": 96387491,
+  "elapsed_seconds": 1452.891,
+  "last_step_seen": 10000,
+  "last_loss_seen": 0.0039,
+  "final_loss": 0.003918035654351115,
+  "final_perplexity": 1.0039257211901684,
+  "tokens_seen": 40832714,
+  "monitor_records": 42,
+  "samples": [
+    {
+      "prompt": "Machine learning is",
+      "completion": " to predict supervised learning problems. Sửaby machine learning has shown, a system is a trainedd a proxy enab – the seen learning task. Exten example a pre-part argument to find new text mining and discovering learning, an primary classification type of different modalities, biological"
+    },
+    {
+      "prompt": "A neural network can",
+      "completion": " needslection |Text.frompretrained\n\n Deep Q called-means agentsed software\nA architecturesed-training (Visual/RepfuncCO-TPUCFANos.hadding a given prefability of MRC to MNI with TORCHAOTE:\n"
+    },
+    {
+      "prompt": "The transformer architecture",
+      "completion": " that is an image de--sable application of GPT-ac2020. Such models have of LLMs for tr-meance preferatic Gemined the use of multi-world applications, which may significant progress networks in large language, computer further been developed to stal invent.\nD"
+    },
+    {
+      "prompt": "Language models learn",
+      "completion": ": Neural learningunts comes with most chat cetunz hist Transformer.\n\nSudo ad forward model is like we discriminates open-an amount for machine learning models, \"unknown\", \"Lavling \"man parameter\": \"go-gradients\". Dist"
+    }
+  ]
+}
