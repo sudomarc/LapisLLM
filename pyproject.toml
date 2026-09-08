@@ -8,16 +8,16 @@ version = "0.1.1"
 description = "LAPIS language model and training stack from scratch"
 requires-python = ">=3.11"
 dependencies = [
-    "torch>=2.0.0",
-    "numpy>=1.24.0",
-    "safetensors>=0.4.0",
-    "pydantic>=2.5.0",
-    "fastapi>=0.104.0",
-    "uvicorn>=0.24.0",
-    "pytest>=7.4.0",
-    "ruff>=0.1.0",
+    "torch>=2.14.0",
+    "pydantic>=2.13.5",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+    "pytest>=9.1.1",
+    "ruff>=0.16.6",
     "pyyaml>=6.0.0",
     "tokenizers>=0.23.2",
+    "rich>=15.0.0",
+    "typer>=0.27.2",
 ]
 
 [project.optional-dependencies]
@@ -25,9 +25,14 @@ data = [
     "datasets>=3.0.0",
     "requests>=2.31.0",
 ]
+dev = [
+    "coverage>=7.10.6",
+    "pip-audit>=2.9.0",
+    "pytest-cov>=6.2.1",
+]
 
 [project.scripts]
-lapis = "scripts.lapis:main"
+lapis = "lapis.cli:app"
 train_tokenizer = "scripts.train_tokenizer:main"
 prepare_data = "scripts.prepare_data:main"
 train = "scripts.train:main"
@@ -49,4 +54,4 @@ addopts = []
 
 [tool.ruff]
 line-length = 88
-select = ["F"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
