@@ -408,7 +408,7 @@ def main() -> None:
     tokens_seen = 0
 
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=True)
         checkpoint_config = checkpoint.get("config", {})
         checkpoint_vocab = checkpoint_config.get("model", {}).get("vocab_size")
         if checkpoint_vocab is not None and int(checkpoint_vocab) != model_config.vocab_size:
