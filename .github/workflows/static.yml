@@ -27,10 +27,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: website/package.json
+          cache-dependency-path: website/package-lock.json
       - name: Install website tooling
         working-directory: website
-        run: npm install
+        run: npm ci
       - name: Lint website
         working-directory: website
         run: npm run lint
@@ -61,10 +61,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: website/package.json
+          cache-dependency-path: website/package-lock.json
       - name: Install website tooling
         working-directory: website
-        run: npm install
+        run: npm ci
       - name: Build website artifact
         working-directory: website
         run: npm run build
