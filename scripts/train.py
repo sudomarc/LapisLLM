@@ -9,21 +9,31 @@ from pathlib import Path
 from scripts import _train_impl as _impl
 from scripts._train_impl import *  # noqa: F401,F403
 
+_PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
 
-def _absolute_arg(flag: str, default: str) -> Path:
+
+def _normalize_path_args() -> None:
+    argv = sys.argv
+    for index, value in enumerate(argv[:-1]):
+        if value in _PATH_FLAGS:
+            argv[index + 1] = str(Path(argv[index + 1]).resolve())
+
+
+def _absolute_checkpoint() -> Path:
     argv = sys.argv
     try:
-        index = argv.index(flag)
+        index = argv.index("--checkpoint")
     except ValueError:
-        return Path(default).resolve()
+        return Path("checkpoints/latest.pt").resolve()
     if index + 1 >= len(argv):
-        raise SystemExit(f"{flag} requires a value")
+        raise SystemExit("--checkpoint requires a value")
     return Path(argv[index + 1]).resolve()
 
 
 def main() -> None:
+    _normalize_path_args()
     _impl.main()
-    checkpoint = _absolute_arg("--checkpoint", "checkpoints/latest.pt")
+    checkpoint = _absolute_checkpoint()
     if not checkpoint.is_file() or checkpoint.stat().st_size <= 0:
         raise RuntimeError(
             "Training reported success but the checkpoint artifact is missing or empty: "
