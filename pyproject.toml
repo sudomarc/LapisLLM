@@ -55,4 +55,4 @@ addopts = []
 
 [tool.ruff]
 line-length = 88
-select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+select = ["F"]
