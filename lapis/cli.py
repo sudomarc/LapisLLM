@@ -15,12 +15,13 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
+from lapis.dev.cli import app as dev_app
 from lapis.ui.training_console import can_use_tui, run_training_console
 
 app = typer.Typer(
     name="lapis",
-    help="Lapis language-model training and inference CLI.",
-    no_args_is_help=True,
+    help="Lapis language-model platform: simple user inference with an explicit developer mode.",
+    no_args_is_help=False,
     rich_markup_mode="rich",
 )
 console = Console()
@@ -40,32 +41,23 @@ def _max_steps(config: Path) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _training_command(
-    config: Path,
-    device: str | None,
-    data: Path | None,
-    checkpoint: Path,
-    epochs: int,
-    monitor_interval: int,
-) -> list[str]:
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.train",
-        "--config",
-        str(config),
-        "--epochs",
-        str(epochs),
-        "--checkpoint",
-        str(checkpoint),
-        "--monitor-interval",
-        str(monitor_interval),
-    ]
+def _training_command(config: Path, device: str | None, data: Path | None, checkpoint: Path, epochs: int, monitor_interval: int) -> list[str]:
+    command = [sys.executable, "-m", "scripts.train", "--config", str(config), "--epochs", str(epochs), "--checkpoint", str(checkpoint), "--monitor-interval", str(monitor_interval)]
     if device:
         command.extend(["--device", device])
     if data:
         command.extend(["--data", str(data)])
     return command
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(ctx: typer.Context) -> None:
+    """Launch the end-user experience when no command is supplied."""
+    if ctx.invoked_subcommand is None and not ctx.resilient_parsing:
+        chat()
+
+
+@app.add_typer(dev_app, name="dev")
 
 
 @app.command("train")
@@ -78,51 +70,19 @@ def train(
     monitor_interval: int = typer.Option(500, "--monitor-interval", min=0),
     no_tui: bool = typer.Option(False, "--no-tui", help="Force the legacy non-interactive renderer."),
 ) -> None:
-    """Train Lapis with the full-screen Training Console when available."""
+    """Legacy training command. Prefer ``lapis dev train`` for new usage."""
     total = _max_steps(REPO_ROOT / config)
     command = _training_command(config, device, data, checkpoint, epochs, monitor_interval)
-
     if not no_tui and can_use_tui():
-        raise typer.Exit(
-            run_training_console(
-                command,
-                config=str(config),
-                checkpoint=str(checkpoint),
-            )
-        )
-
-    console.print(Panel.fit(
-        f"[bold]Lapis Training[/bold]\n"
-        f"Config: {config}\n"
-        f"Device: {device or 'auto'}\n"
-        f"Checkpoint: {checkpoint}",
-        border_style="bright_blue",
-    ))
-
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("loss {task.fields[loss]}"),
-        TextColumn("step {task.completed}/{task.total}"),
-        TimeRemainingColumn(),
-        console=console,
-    )
+        raise typer.Exit(run_training_console(command, config=str(config), checkpoint=str(checkpoint)))
+    console.print(Panel.fit(f"[bold]Lapis Training[/bold]\nConfig: {config}\nDevice: {device or 'auto'}\nCheckpoint: {checkpoint}", border_style="bright_blue"))
+    progress = Progress(SpinnerColumn(), TextColumn("[bold blue]{task.description}"), BarColumn(), TaskProgressColumn(), TextColumn("loss {task.fields[loss]}"), TextColumn("step {task.completed}/{task.total}"), TimeRemainingColumn(), console=console)
     task_total = total if total > 0 else None
     started = time.monotonic()
     last_lines: list[str] = []
-
     with progress:
         task = progress.add_task("training", total=task_total, loss="--")
-        process = subprocess.Popen(
-            command,
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
+        process = subprocess.Popen(command, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         assert process.stdout is not None
         for raw_line in process.stdout:
             line = raw_line.rstrip()
@@ -132,24 +92,15 @@ def train(
             del last_lines[:-3]
             match = re.search(r"step=(\d+)\s+loss=([0-9.eE+-]+)", line)
             if match:
-                step = int(match.group(1))
-                progress.update(task, completed=step, loss=match.group(2))
+                progress.update(task, completed=int(match.group(1)), loss=match.group(2))
             elif "Checkpoint saved:" in line:
                 progress.update(task, description="saving checkpoint")
-
         return_code = process.wait()
-
     elapsed = time.monotonic() - started
     if return_code:
         console.print(Panel("\n".join(last_lines) or "Training failed.", title="Training failed", border_style="red"))
         raise typer.Exit(return_code)
-
-    console.print(Panel.fit(
-        f"[bold green]Training complete[/bold green]\n"
-        f"Elapsed: {elapsed:.1f}s\n"
-        f"Checkpoint: {checkpoint}",
-        border_style="green",
-    ))
+    console.print(Panel.fit(f"[bold green]Training complete[/bold green]\nElapsed: {elapsed:.1f}s\nCheckpoint: {checkpoint}", border_style="green"))
 
 
 @app.command("generate")
@@ -162,33 +113,19 @@ def generate(
     top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
     device: str = typer.Option("auto", "--device"),
 ) -> None:
-    """Generate text from a checkpoint."""
-    _run([
-        sys.executable,
-        "-m",
-        "scripts.generate",
-        "--checkpoint", str(checkpoint),
-        "--prompt", prompt,
-        "--max-new-tokens", str(max_new_tokens),
-        "--temperature", str(temperature),
-        "--top-k", str(top_k),
-        "--top-p", str(top_p),
-        "--device", device,
-    ])
+    """Legacy direct generation command."""
+    _run([sys.executable, "-m", "scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device])
 
 
 @app.command("evaluate")
-def evaluate(
-    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
-    device: str = typer.Option("auto", "--device"),
-) -> None:
-    """Evaluate a trained checkpoint."""
+def evaluate(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), device: str = typer.Option("auto", "--device")) -> None:
+    """Legacy evaluation command. Prefer ``lapis dev evaluate``."""
     _run([sys.executable, "-m", "scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device])
 
 
 @app.command("chat")
 def chat() -> None:
-    """Start the Lapis chat interface."""
+    """Start the user-facing Lapis chat interface."""
     _run([sys.executable, "-m", "scripts.chat"])
 
 
