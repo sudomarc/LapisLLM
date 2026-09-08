@@ -120,8 +120,6 @@ def clean_generated_artifacts(status: list[str], *, phase: str) -> None:
         run(["git", "restore", "--source=HEAD", "--worktree", "--", *tracked])
         print(color(f"✓ Restored {len(tracked)} tracked generated file(s)", OK))
 
-    # Remove only untracked files in the generated corpus directory.
-    # Ignored checkpoint run data is intentionally preserved.
     if TRAINING_DATA_ROOT.exists():
         run(["git", "clean", "-fd", "--", "training_data"], check=False)
         print(color("✓ Removed untracked generated training_data files", OK))
@@ -154,8 +152,6 @@ def commit_local_history() -> None:
 
 
 def git_sync_pull() -> None:
-    # Training history is a legitimate local output of previous runs. Commit it
-    # first so the pull cannot discard it and can rebase it onto remote history.
     commit_local_history()
 
     status = git_status()
@@ -181,11 +177,7 @@ def git_sync_push(message: str) -> None:
         print(color("✓ Nothing new to push", MUTED))
         return
 
-    non_history = [
-        line
-        for line in status
-        if not is_history_path(status_path(line))
-    ]
+    non_history = [line for line in status if not is_history_path(status_path(line))]
     if non_history:
         raise RuntimeError(
             "Refusing to push because non-history local changes remain:\n"
@@ -203,9 +195,17 @@ def git_sync_push(message: str) -> None:
         return
 
     run(["git", "commit", "-m", message])
-    print(color("Git", BOLD) + "  pushing origin/main...")
-    run(["git", "push", "origin", "main"])
-    print(color("✓ Changes pushed to origin/main", OK))
+
+    current_branch = run(["git", "branch", "--show-current"], capture=True).stdout.strip()
+    if current_branch in {"main", "master"}:
+        target_branch = f"training-history/{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+        print(color("Git", BOLD) + f"  main/master detected; pushing history to {target_branch}...")
+        run(["git", "push", "origin", f"HEAD:{target_branch}"])
+        print(color("✓ Training history pushed to a non-protected branch", OK))
+    else:
+        print(color("Git", BOLD) + f"  pushing {current_branch}...")
+        run(["git", "push", "origin", current_branch])
+        print(color("✓ Changes pushed", OK))
 
 
 def progress_bar(step: int, total: int, width: int = 34) -> str:
@@ -351,7 +351,7 @@ def train_one_run(
 
     import torch
 
-    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     recorded_step = int(state.get("step", -1))
     if recorded_step != target_steps:
         raise RuntimeError(
@@ -638,7 +638,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser(
-        "train", help="pull, train, verify, push, then launch chat"
+        "train", help="pull, train, verify, push history, then launch chat"
     )
     subparsers.add_parser(
         "chat", help="launch the latest locally trained checkpoint"
