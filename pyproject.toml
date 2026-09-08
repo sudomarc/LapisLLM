@@ -30,6 +30,7 @@ dev = [
     "coverage>=7.10.6",
     "pip-audit>=2.9.0",
     "pytest-cov>=6.2.1",
+    "textual>=8.2.8,<9.0.0",
 ]
 
 [project.scripts]
