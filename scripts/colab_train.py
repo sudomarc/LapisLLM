@@ -22,6 +22,23 @@ def _absolute_child_paths(command: list[str]) -> list[str]:
     return normalized
 
 
+def completed_run_numbers() -> set[int]:
+    """Return completed runs while preserving legacy summaries without status."""
+    numbers: set[int] = set()
+    if not _impl.HISTORY.is_dir():
+        return numbers
+    for summary in _impl.HISTORY.glob("run-*/summary.json"):
+        try:
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            number = int(data["run_number"])
+            status = data.get("status", "completed")
+            if status == "completed":
+                numbers.add(number)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+    return numbers
+
+
 def train_one_run(run_number: int, total_runs: int, args, device: str, config: Path) -> dict:
     """Run the canonical trainer while forcing absolute child artifact paths."""
 
@@ -37,6 +54,7 @@ def train_one_run(run_number: int, total_runs: int, args, device: str, config: P
         _impl.subprocess.Popen = _ORIGINAL_POPEN
 
 
+_impl.completed_run_numbers = completed_run_numbers
 _impl.train_one_run = train_one_run
 main = _impl.main
 
