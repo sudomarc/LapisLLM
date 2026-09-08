@@ -2,26 +2,36 @@ name: Lapis tests
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "maintenance/**"]
   pull_request:
 
 jobs:
   test:
+    name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -e .
+        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
 
-      - name: Run tests
-        run: python -m pytest
+      - name: Run tests with coverage
+        run: python -m pytest --cov=lapis --cov-report=term-missing --cov-report=xml
 
       - name: Run tiny training smoke test
         run: python -m scripts.train --config configs/tiny.yaml --epochs 1 --device cpu
@@ -31,3 +41,27 @@ jobs:
 
       - name: Ruff check
         run: ruff check .
+
+      - name: Dependency vulnerability audit
+        run: python -m pip_audit
+
+      - name: Working-tree secret scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='(^|[^A-Za-z0-9])(gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)'
+          if git grep -nE "$pattern" -- . ':(exclude).git'; then
+            echo "Potential secret detected in tracked files." >&2
+            exit 1
+          fi
+
+      - name: Git-history secret scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'
+          matches="$(git log --all --patch --regexp-ignore-case -G "$pattern" -- || true)"
+          if printf '%s\n' "$matches" | grep -qE '^\+.*(gh[pousr]_|sk-|AKIA|BEGIN .*PRIVATE KEY)'; then
+            echo "Potential secret detected in Git history." >&2
+            exit 1
+          fi
