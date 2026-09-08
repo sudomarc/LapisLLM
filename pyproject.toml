@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 data = [
     "datasets>=5.0.1",
-    "requests>=2.31.0",
+    "requests>=2.34.2",
 ]
 dev = [
     "coverage>=7.10.6",
