@@ -1,5 +1,5 @@
 """Stable inference APIs shared by user-facing and developer tooling."""
 
-from lapis.inference.runtime import LapisRuntime
+from lapis.inference.runtime import CheckpointLoadError, LapisRuntime, SamplingConfig
 
-__all__ = ["LapisRuntime"]
+__all__ = ["CheckpointLoadError", "LapisRuntime", "SamplingConfig"]
