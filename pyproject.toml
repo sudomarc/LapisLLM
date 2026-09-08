@@ -49,6 +49,7 @@ download_datasets = "scripts.download_datasets:main"
 include = [
     { path = "configs/*.yaml", format = "wheel" },
     { path = "configs/data/*.yaml", format = "wheel" },
+    { path = "configs/user/*.yaml", format = "wheel" },
 ]
 
 [tool.pytest]
