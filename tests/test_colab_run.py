@@ -32,3 +32,33 @@ def test_github_auth_env_does_not_modify_environment(monkeypatch):
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert env["LAPIS_GIT_TOKEN"] == "secret-token"
         assert os.environ.get("GIT_ASKPASS") is None
+
+
+def test_push_history_uses_dedicated_branch_from_main(monkeypatch):
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "main\n"
+
+    def fake_git_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:3] == ["git", "status", "--porcelain"]:
+            result = Result()
+            result.stdout = " M training_history/run/summary.json\n"
+            return result
+        if cmd[:3] == ["git", "diff", "--cached"]:
+            result = Result()
+            result.stdout = "training_history/run/summary.json\n"
+            return result
+        if cmd[:3] == ["git", "branch", "--show-current"]:
+            return Result()
+        return Result()
+
+    monkeypatch.setattr(colab_run, "git_run", fake_git_run)
+    assert colab_run.push_history("token") is True
+
+    push_commands = [cmd for cmd, _ in calls if cmd[:3] == ["git", "push", "origin"]]
+    assert len(push_commands) == 1
+    assert push_commands[0][3].startswith("HEAD:training-history/")
+    assert push_commands[0][3] != "main"
