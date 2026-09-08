@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -e ".[dev]"
 
+      - name: Validate agent skill system
+        run: python .agents/runtime/validate.py
+
       - name: Run tests with coverage
         run: python -m pytest --cov=lapis --cov-report=term-missing --cov-report=xml
 

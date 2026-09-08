@@ -1,0 +1,55 @@
+version: 1
+name: lapis-agent-system
+bootstrap: .agents/bootstrap.md
+skills_root: .agents/skills
+validation_command: python .agents/runtime/validate.py
+selection_command: python .agents/runtime/select.py
+skills:
+  - name: agent-operating-system
+    path: .agents/skills/core/agent-operating-system/SKILL.md
+    triggers: [agent, task, repository, workflow, verify]
+  - name: context-engineering
+    path: .agents/skills/core/context-engineering/SKILL.md
+    triggers: [context, prompt, memory, tokens, context-window]
+  - name: repository-exploration
+    path: .agents/skills/vibe-coding/repository-exploration/SKILL.md
+    triggers: [inspect, explore, understand, trace]
+  - name: vibe-coding-engineering
+    path: .agents/skills/vibe-coding/engineering/SKILL.md
+    triggers: [implement, add, change, feature, fix, bug, test, review, ci, git]
+  - name: llm-api-architecture
+    path: .agents/skills/llm-api/architecture/SKILL.md
+    triggers: [api, endpoint, schema, fastapi, http]
+  - name: prompt-contracts
+    path: .agents/skills/llm-api/prompt-contracts/SKILL.md
+    triggers: [prompt, system-message, instruction]
+  - name: structured-output
+    path: .agents/skills/llm-api/structured-output/SKILL.md
+    triggers: [json, schema, structured-output]
+  - name: tool-calling
+    path: .agents/skills/llm-api/tool-calling/SKILL.md
+    triggers: [tool, function-calling, mcp]
+  - name: agent-loops
+    path: .agents/skills/llm-api/agent-loops/SKILL.md
+    triggers: [agent-loop, iteration, steps, autonomy]
+  - name: streaming-resilience
+    path: .agents/skills/llm-api/streaming/SKILL.md
+    triggers: [stream, streaming, sse, websocket]
+  - name: api-resilience
+    path: .agents/skills/llm-api/resilience/SKILL.md
+    triggers: [retry, timeout, rate-limit, failover, resilience]
+  - name: provider-compatibility
+    path: .agents/skills/llm-api/provider-compatibility/SKILL.md
+    triggers: [provider, model, openai, anthropic, gemini, openrouter]
+  - name: agent-security
+    path: .agents/skills/security/security/SKILL.md
+    triggers: [security, injection, secret, auth, permission]
+  - name: evals
+    path: .agents/skills/quality/evals/SKILL.md
+    triggers: [eval, benchmark, quality, compare]
+  - name: observability
+    path: .agents/skills/operations/observability/SKILL.md
+    triggers: [trace, telemetry, logging, metrics, latency]
+  - name: documentation
+    path: .agents/skills/operations/documentation/SKILL.md
+    triggers: [docs, documentation, readme, changelog]
