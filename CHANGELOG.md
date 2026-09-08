@@ -2,7 +2,7 @@
 
 All notable changes to LapisLLM are documented here.
 
-## [Unreleased] - 2026-09-08
+## [0.2.0] - 2026-09-08
 
 ### Fixed
 
