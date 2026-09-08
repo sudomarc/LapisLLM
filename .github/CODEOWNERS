@@ -1,0 +1,12 @@
+# Official upstream ownership / review
+# Keep this file aligned with the project owner account.
+* @sudomarc
+
+# Legal and governance files require owner review.
+/LICENSE @sudomarc
+/NOTICE @sudomarc
+/TRADEMARKS.md @sudomarc
+/CONTRIBUTOR_AGREEMENT.md @sudomarc
+/CODE_OF_CONDUCT.md @sudomarc
+/SECURITY.md @sudomarc
+/.github/ @sudomarc
