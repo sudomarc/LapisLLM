@@ -129,15 +129,78 @@ Check static analysis:
 ruff check .
 ```
 
-## Lapis Console
+## LapisLLM modes
 
-The recommended entrypoint is the unified `lapis` command:
+LapisLLM is one project with one shared model/tokenizer/checkpoint core and two explicit operating modes.
+
+### USER mode — inference by default
+
+For an end user, the default entrypoint is deliberately simple:
 
 ```bash
 lapis
 ```
 
-It can also be launched directly from a checkout:
+Equivalent explicit command:
+
+```bash
+lapis chat
+```
+
+USER mode loads the configured/default checkpoint and exposes inference controls only. User-facing settings are kept in `configs/user/default.yaml`:
+
+```yaml
+model: latest
+device: auto
+temperature: 0.8
+top_k: 40
+top_p: 0.95
+max_new_tokens: 128
+```
+
+Training parameters such as learning rate, optimizer state, epochs, batch size and dataset paths are not part of the USER configuration.
+
+The stable Python inference API is:
+
+```python
+from lapis.inference import LapisRuntime
+
+runtime = LapisRuntime.from_checkpoint("checkpoints/latest.pt")
+response = runtime.generate("Explain DNS.")
+```
+
+The USER runtime loads checkpoints read-only and does not expose training or checkpoint-writing operations.
+
+### DEV mode — explicit development tooling
+
+Developer operations live behind an explicit namespace:
+
+```bash
+lapis dev --help
+lapis dev train --config configs/tiny.yaml
+lapis dev evaluate --checkpoint checkpoints/latest.pt
+lapis dev generate "A language model learns by"
+lapis dev inspect --checkpoint checkpoints/latest.pt
+lapis dev benchmark --checkpoint checkpoints/latest.pt
+lapis dev checkpoint inspect --checkpoint checkpoints/latest.pt
+```
+
+DEV owns training, evaluation, benchmarking, checkpoint inspection and the detailed training console. Existing lower-level scripts and legacy top-level commands remain available for compatibility.
+
+The design rule is:
+
+```text
+lapis       → USER → inference/chat
+lapis dev   → DEV  → train/evaluate/inspect/benchmark
+```
+
+See [`docs/modes.md`](docs/modes.md) for the full separation contract.
+
+## Lapis Console
+
+The recommended user entrypoint is now `lapis`, which launches USER chat. Developer experiments should use the explicit `lapis dev` namespace.
+
+The original experiment console remains available from a checkout:
 
 ```bash
 python scripts/lapis.py
@@ -146,7 +209,7 @@ python scripts/lapis.py
 ### One-command experiment
 
 ```bash
-lapis train
+lapis dev train
 ```
 
 The console:
@@ -393,10 +456,10 @@ From a fresh checkout:
 !pip install -e .
 ```
 
-Then use the unified console:
+Then use the developer namespace:
 
 ```bash
-!lapis train
+!lapis dev train
 ```
 
 The console performs the Git synchronization at startup, asks how many complete training runs to execute, validates each run, records its history, and attempts to push only the lightweight history back to GitHub.
@@ -410,8 +473,11 @@ The console performs the Git synchronization at startup, asks how many complete 
 LapisLLM/
 ├── lapis/
 │   ├── config/            # configuration models and runtime validation
+│   ├── inference/         # shared inference-only runtime
 │   ├── model/             # Transformer, attention, RoPE, MLP, normalization
 │   ├── tokenizer/         # BPE tokenizer
+│   ├── user/              # end-user inference facade
+│   ├── dev/               # explicit developer CLI namespace
 │   └── training/          # Learning Monitor and training helpers
 ├── scripts/
 │   ├── lapis.py           # unified experiment console
@@ -422,6 +488,7 @@ LapisLLM/
 │   ├── serve.py           # OpenAI-style HTTP server
 │   └── fetch_open_corpus.py
 ├── configs/               # YAML experiment configurations
+│   └── user/              # user-only inference configuration
 ├── tests/                 # correctness and integration tests
 ├── training_history/      # lightweight verified experiment records
 ├── docs/                  # technical documentation
