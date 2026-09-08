@@ -26,7 +26,7 @@ data = [
     "requests>=2.34.2",
 ]
 dev = [
-    "coverage>=7.10.6",
+    "coverage>=7.16.0",
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=6.2.1",
