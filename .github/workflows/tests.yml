@@ -2,7 +2,7 @@ name: Lapis tests
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "maintenance/**"]
   pull_request:
 
 jobs:
@@ -49,7 +49,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -nE '(^|[^A-Za-z0-9])(gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- . ':(exclude).git'; then
+          pattern='(^|[^A-Za-z0-9])(gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)'
+          if git grep -nE "$pattern" -- . ':(exclude).git'; then
             echo "Potential secret detected in tracked files." >&2
             exit 1
           fi
@@ -58,9 +59,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git log --all --patch --regexp-ignore-case -G 'gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' -- .; then
-            if git log --all --patch --regexp-ignore-case -G 'gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' -- . | grep -qE '^[+].*(gh[pousr]_|sk-|AKIA|BEGIN .*PRIVATE KEY)'; then
-              echo "Potential secret detected in Git history." >&2
-              exit 1
-            fi
+          pattern='gh[pousr]_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'
+          matches="$(git log --all --patch --regexp-ignore-case -G "$pattern" -- || true)"
+          if printf '%s\n' "$matches" | grep -qE '^\+.*(gh[pousr]_|sk-|AKIA|BEGIN .*PRIVATE KEY)'; then
+            echo "Potential secret detected in Git history." >&2
+            exit 1
           fi
