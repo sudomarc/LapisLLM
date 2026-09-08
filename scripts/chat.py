@@ -13,6 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from lapis.config.base import load_config
 from lapis.inference.runtime import LapisRuntime, SamplingConfig
 
 RESET = "\033[0m"
@@ -39,11 +40,7 @@ def load_chat_model(checkpoint_path: Path, device: str) -> LapisRuntime:
     return LapisRuntime.from_checkpoint(checkpoint_path, device)
 
 
-def render_header(
-    *,
-    runtime: LapisRuntime,
-    color: bool,
-) -> None:
+def render_header(*, runtime: LapisRuntime, color: bool) -> None:
     width = 66
     print()
     print(paint("╭" + "─" * width + "╮", ACCENT, color))
@@ -130,18 +127,30 @@ def save_conversation(path: Path, messages: list[tuple[str, str]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chat with Lapis in the terminal")
-    parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--max-new-tokens", type=int, default=128)
-    parser.add_argument("--temperature", type=float, default=0.8)
-    parser.add_argument("--top-k", type=int, default=40)
-    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--config", default="configs/user/default.yaml")
+    parser.add_argument("--checkpoint", default=None)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--top-k", type=int, default=None)
+    parser.add_argument("--top-p", type=float, default=None)
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args()
-    config = SamplingConfig(args.max_new_tokens, args.temperature, args.top_k, args.top_p)
+
     try:
-        config.validate()
-        runtime = load_chat_model(Path(args.checkpoint), args.device)
+        user_config = load_config(args.config)
+        checkpoint = args.checkpoint or str(user_config.get("model", "latest"))
+        if checkpoint == "latest":
+            checkpoint = "checkpoints/latest.pt"
+        device = args.device or str(user_config.get("device", "auto"))
+        sampling = SamplingConfig(
+            max_new_tokens=int(args.max_new_tokens if args.max_new_tokens is not None else user_config.get("max_new_tokens", 128)),
+            temperature=float(args.temperature if args.temperature is not None else user_config.get("temperature", 0.8)),
+            top_k=int(args.top_k if args.top_k is not None else user_config.get("top_k", 40)),
+            top_p=float(args.top_p if args.top_p is not None else user_config.get("top_p", 0.95)),
+        )
+        sampling.validate()
+        runtime = load_chat_model(Path(checkpoint), device)
     except (FileNotFoundError, KeyError, RuntimeError, ValueError, OSError, TypeError) as exc:
         print(paint("Unable to load the model. Check that a valid checkpoint is installed.", ERROR, not args.no_color), file=sys.stderr)
         if os.environ.get("LAPIS_DEV") == "1":
@@ -181,7 +190,7 @@ def main() -> None:
             continue
         if command == "/stats":
             context_tokens = count_context_tokens(runtime, messages)
-            print(f"model {runtime.checkpoint.name}\ndevice {runtime.device}\nparameters {sum(p.numel() for p in runtime.model.parameters()):,}\nmessages {len(messages)}\ncontext {context_tokens}/{runtime.model.max_position_embeddings - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {config.temperature:.2f}\nmax tokens {config.max_new_tokens}\n")
+            print(f"model {runtime.checkpoint.name}\ndevice {runtime.device}\nparameters {sum(p.numel() for p in runtime.model.parameters()):,}\nmessages {len(messages)}\ncontext {context_tokens}/{runtime.model.max_position_embeddings - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
             continue
         if command == "/context":
             context_tokens = count_context_tokens(runtime, messages)
@@ -193,23 +202,23 @@ def main() -> None:
             continue
         if command == "/temperature":
             if not argument:
-                print(f"temperature = {config.temperature:.2f}")
+                print(f"temperature = {sampling.temperature:.2f}")
                 continue
             try:
-                config = SamplingConfig(config.max_new_tokens, float(argument), config.top_k, config.top_p)
-                config.validate()
-                print(paint(f"✓ temperature = {config.temperature:.2f}", SUCCESS, color))
+                sampling = SamplingConfig(sampling.max_new_tokens, float(argument), sampling.top_k, sampling.top_p)
+                sampling.validate()
+                print(paint(f"✓ temperature = {sampling.temperature:.2f}", SUCCESS, color))
             except ValueError as exc:
                 print(paint(str(exc), ERROR, color))
             continue
         if command == "/tokens":
             if not argument:
-                print(f"max-new-tokens = {config.max_new_tokens}")
+                print(f"max-new-tokens = {sampling.max_new_tokens}")
                 continue
             try:
-                config = SamplingConfig(int(argument), config.temperature, config.top_k, config.top_p)
-                config.validate()
-                print(paint(f"✓ max-new-tokens = {config.max_new_tokens}", SUCCESS, color))
+                sampling = SamplingConfig(int(argument), sampling.temperature, sampling.top_k, sampling.top_p)
+                sampling.validate()
+                print(paint(f"✓ max-new-tokens = {sampling.max_new_tokens}", SUCCESS, color))
             except ValueError as exc:
                 print(paint(str(exc), ERROR, color))
             continue
@@ -228,7 +237,7 @@ def main() -> None:
             prompt = build_prompt(messages)
             prompt_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
         print()
-        response = stream_response(runtime, prompt, config, color)
+        response = stream_response(runtime, prompt, sampling, color)
         generated_tokens += len(runtime.tokenizer.encode(response, add_special_tokens=False))
         messages.append(("assistant", response))
         print()
