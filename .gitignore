@@ -5,10 +5,19 @@
 __pycache__/
 *.py[cod]
 *.pyo
+.venv/
 venv/
 .env
 .env.*
 !.env.example
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
 
 # Data
 data/raw/
@@ -28,6 +37,12 @@ runs/
 # Model checkpoints (large files)
 *.safetensors
 *.gguf
+
+# Sensitive key material
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Jupyter
 .ipynb_checkpoints/

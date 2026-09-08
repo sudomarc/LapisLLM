@@ -10,6 +10,14 @@ All notable changes to LapisLLM are documented here.
 - Scoped GitHub Pages write and OIDC permissions to the deployment job only.
 - Updated the website workflow to Node.js 24.
 - Moved `pytest` and `ruff` to the development extra instead of requiring them for runtime installs.
+- Packaged the `scripts` entry-point modules so wheel installations expose the same CLI targets as editable installs.
+
+### Added
+
+- Added a non-editable wheel build/import validation to CI, including checks for packaged CLI modules.
+- Added an npm lockfile and switched website CI from `npm install` to reproducible `npm ci` installs.
+- Added `SECURITY.md` with vulnerability-reporting, checkpoint-safety, and secret-handling guidance.
+- Expanded generated-file and private-key patterns in `.gitignore` and CI secret scans.
 
 ### Notes
 
