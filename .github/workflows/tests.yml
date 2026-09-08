@@ -85,3 +85,13 @@ jobs:
             echo "Potential secret detected in Git history." >&2
             exit 1
           fi
+
+      - name: Reject unsafe torch checkpoint loaders
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='weights_only[[:space:]]*=[[:space:]]*False'
+          if git grep -nE "$pattern" -- '*.py' -- .; then
+            echo "Unsafe torch checkpoint deserialization found in Python source." >&2
+            exit 1
+          fi
