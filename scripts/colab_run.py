@@ -7,7 +7,7 @@ The preferred source in Google Colab is a secret named ``GITHUB_TOKEN``.
 Flow:
     clone/reuse checkout -> authenticate -> pull -> install -> validate -> tests
     -> build/reuse corpus -> run verified training runs -> write history
-    -> commit history -> push main
+    -> commit history -> push a dedicated branch
 
 Generated artifacts such as ``training_data/`` and ``checkpoints/`` stay local.
 Only lightweight training history is committed.
@@ -68,11 +68,7 @@ def run(
 
 
 def get_github_token() -> str | None:
-    """Resolve the GitHub PAT from Colab Secret first, then environment aliases.
-
-    Colab's secret store is accessed lazily so the module remains usable outside
-    Colab. Empty values are ignored.
-    """
+    """Resolve the GitHub PAT from Colab Secret first, then environment aliases."""
     for name in ("GITHUB_TOKEN", "GH_TOKEN", "LAPIS_GITHUB_TOKEN"):
         value = os.environ.get(name)
         if value and value.strip():
@@ -95,12 +91,7 @@ def get_github_token() -> str | None:
 
 @contextmanager
 def github_auth_env(token: str):
-    """Expose a token to Git through a short-lived ``GIT_ASKPASS`` helper.
-
-    The token is not placed in ``git remote -v``, process arguments, repository
-    configuration, command output, or a tracked file. The helper directory is
-    deleted as soon as the Git operation completes.
-    """
+    """Expose a token to Git through a short-lived ``GIT_ASKPASS`` helper."""
     if not token:
         yield {}
         return
@@ -192,13 +183,6 @@ def sync_pull(token: str | None) -> None:
     print("\n" + "=" * 70)
     print("GIT — SYNCHRONISATION")
     print("=" * 70)
-    for key, value in (
-        ("user.name", "LapisLLM Colab"),
-        ("user.email", "lapisllm-colab@users.noreply.github.com"),
-    ):
-        if not git_run(["git", "config", key], check=False, capture=True).stdout.strip():
-            git_run(["git", "config", key, value])
-
     status = git_run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
         capture=True,
@@ -232,9 +216,6 @@ def sync_pull(token: str | None) -> None:
 
 
 def validate_project() -> None:
-    print("\n" + "=" * 70)
-    print("VALIDATION DU PROJET")
-    print("=" * 70)
     missing = [path for path in REQUIRED_FILES if not (REPO_ROOT / path).exists()]
     if missing:
         raise RuntimeError("Fichiers requis absents :\n" + "\n".join(missing))
@@ -243,17 +224,11 @@ def validate_project() -> None:
 
 
 def install_project() -> None:
-    print("\n" + "=" * 70)
-    print("INSTALLATION")
-    print("=" * 70)
     run([os.sys.executable, "-m", "pip", "install", "-e", ".[data]", "-q"])
     print("✅ Dépendances installées.")
 
 
 def validate_tests() -> None:
-    print("\n" + "=" * 70)
-    print("VALIDATION — TESTS")
-    print("=" * 70)
     run([os.sys.executable, "-m", "pytest", "-q"])
     print("✅ Tests réussis.")
 
@@ -266,7 +241,6 @@ def parse_max_steps(config: Path) -> int:
     steps = int(match.group(1))
     if steps < 1:
         raise ValueError("training.max_steps doit être >= 1")
-    print(f"✅ max_steps = {steps:,}")
     return steps
 
 
@@ -278,8 +252,6 @@ def build_corpus(max_wiki_articles: int = 40, max_doc_files: int = 20) -> None:
     if DEFAULT_DATA.exists() and DEFAULT_DATA.stat().st_size >= 100_000:
         print(f"✅ Corpus existant : {DEFAULT_DATA.stat().st_size:,} octets")
         return
-
-    print("Corpus absent ou trop petit. Construction...")
     run(
         [
             os.sys.executable,
@@ -402,11 +374,6 @@ def train_one_run(
     }
     write_history(summary)
     print("✅ RUN VERIFIED")
-    print(f"steps       : {summary['recorded_step']:,}")
-    print(f"loss        : {summary['final_loss']}")
-    print(f"perplexity  : {summary['final_perplexity']}")
-    print(f"duration    : {summary['elapsed_seconds']:.1f}s")
-    print(f"history     : {HISTORY_ROOT / run_id}")
     return summary
 
 
@@ -419,7 +386,7 @@ def verify_run(checkpoint: Path, monitor_log: Path, expected_steps: int) -> dict
 
     import torch
 
-    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     recorded_step = int(state.get("step", -1))
     if recorded_step != expected_steps:
         raise RuntimeError(
@@ -514,34 +481,36 @@ def push_history(token: str | None) -> bool:
         if staged:
             git_run(["git", "commit", "-m", "chore: record automated training run history"])
 
+    branch = git_run(["git", "branch", "--show-current"], capture=True).stdout.strip()
+    if branch in {"main", "master"}:
+        branch = f"training-history/{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+        result = git_run(["git", "push", "origin", f"HEAD:{branch}"], token=token, check=False)
+    else:
+        result = git_run(["git", "push", "origin", branch], token=token, check=False)
+
+    if result.returncode == 0:
+        print(f"✅ Historique poussé vers origin/{branch}.")
+        return True
+    print(f"❌ git push a échoué (code {result.returncode}).")
     if token:
-        result = git_run(["git", "push", "origin", "main"], token=token, check=False)
-        if result.returncode == 0:
-            print("✅ Historique poussé vers origin/main avec le secret Colab.")
-            return True
-        print(f"❌ git push a échoué avec le token (code {result.returncode}).")
         return False
 
-    print("Aucun secret GitHub détecté. Tentative avec les credentials Git existants.")
-    result = git_run(["git", "push", "origin", "main"], check=False)
-    if result.returncode == 0:
-        print("✅ Historique poussé avec les credentials Git existants.")
-        return True
-
-    token = getpass.getpass("GitHub PAT pour pousser vers main (entrée masquée) : ").strip()
+    token = getpass.getpass("GitHub PAT pour pousser l'historique (entrée masquée) : ").strip()
     if not token:
         print("⚠️ Aucun PAT fourni ; push non effectué.")
         return False
-    result = git_run(["git", "push", "origin", "main"], token=token, check=False)
+    if branch in {"main", "master"}:
+        raise RuntimeError("Refus de pousser vers main/master")
+    result = git_run(["git", "push", "origin", branch], token=token, check=False)
     if result.returncode != 0:
         raise RuntimeError("git push a échoué après authentification PAT.")
-    print("✅ Historique poussé vers origin/main.")
+    print(f"✅ Historique poussé vers origin/{branch}.")
     return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="LapisLLM Colab training orchestrator")
-    parser.add_argument("--runs", type=int, default=None, help="Number of training runs")
+    parser.add_argument("--runs", type=int, default=None)
     parser.add_argument("--monitor-interval", type=int, default=500)
     parser.add_argument("--monitor-sample-tokens", type=int, default=48)
     parser.add_argument("--monitor-prompts", default=None)
@@ -559,11 +528,7 @@ def main() -> None:
         parser.error("--monitor-sample-tokens doit être >= 1")
 
     token = get_github_token()
-    if token:
-        print("GitHub auth: secret Colab GITHUB_TOKEN détecté (valeur masquée).")
-    else:
-        print("GitHub auth: aucun secret GITHUB_TOKEN/GH_TOKEN détecté.")
-
+    print("GitHub auth: secret détecté (valeur masquée)." if token else "GitHub auth: aucun secret détecté.")
     bootstrap_repo(token)
     sync_pull(token)
     validate_project()
@@ -572,7 +537,6 @@ def main() -> None:
     build_corpus(args.max_wiki_articles, args.max_doc_files)
 
     runs = args.runs if args.runs is not None else prompt_int("Combien de runs d'entraînement ?", 1, 1)
-    print(f"✅ Runs = {runs}")
     device = detect_device() if args.device == "auto" else args.device
     if device == "cuda":
         import torch
@@ -600,7 +564,3 @@ def main() -> None:
     pushed = push_history(token)
     if not pushed:
         print("⚠️ Training terminé, mais l'historique GitHub n'a pas été poussé.")
-
-
-if __name__ == "__main__":
-    main()
