@@ -14,29 +14,14 @@ skills:
   - name: repository-exploration
     path: .agents/skills/vibe-coding/repository-exploration/SKILL.md
     triggers: [inspect, explore, understand, trace]
-  - name: implementation
-    path: .agents/skills/vibe-coding/implementation/SKILL.md
-    triggers: [implement, add, change, feature, fix]
-  - name: debugging
-    path: .agents/skills/vibe-coding/debugging/SKILL.md
-    triggers: [bug, debug, crash, failure, regression]
-  - name: testing
-    path: .agents/skills/vibe-coding/testing/SKILL.md
-    triggers: [test, pytest, regression, coverage]
-  - name: ci-debugging
-    path: .agents/skills/vibe-coding/ci-debugging/SKILL.md
-    triggers: [ci, github-actions, workflow, check]
-  - name: code-review
-    path: .agents/skills/vibe-coding/code-review/SKILL.md
-    triggers: [review, pull-request, pr, diff]
-  - name: git-safety
-    path: .agents/skills/vibe-coding/git-safety/SKILL.md
-    triggers: [git, commit, branch, merge, rebase]
-  - name: api-architecture
-    path: .agents/skills/llm-api/api-architecture/SKILL.md
+  - name: vibe-coding-engineering
+    path: .agents/skills/vibe-coding/engineering/SKILL.md
+    triggers: [implement, add, change, feature, fix, bug, test, review, ci, git]
+  - name: llm-api-architecture
+    path: .agents/skills/llm-api/architecture/SKILL.md
     triggers: [api, endpoint, schema, fastapi, http]
-  - name: prompting
-    path: .agents/skills/llm-api/prompting/SKILL.md
+  - name: prompt-contracts
+    path: .agents/skills/llm-api/prompt-contracts/SKILL.md
     triggers: [prompt, system-message, instruction]
   - name: structured-output
     path: .agents/skills/llm-api/structured-output/SKILL.md
@@ -48,12 +33,15 @@ skills:
     path: .agents/skills/llm-api/agent-loops/SKILL.md
     triggers: [agent-loop, iteration, steps, autonomy]
   - name: streaming-resilience
-    path: .agents/skills/llm-api/streaming-resilience/SKILL.md
+    path: .agents/skills/llm-api/streaming/SKILL.md
     triggers: [stream, streaming, sse, websocket]
+  - name: api-resilience
+    path: .agents/skills/llm-api/resilience/SKILL.md
+    triggers: [retry, timeout, rate-limit, failover, resilience]
   - name: provider-compatibility
     path: .agents/skills/llm-api/provider-compatibility/SKILL.md
     triggers: [provider, model, openai, anthropic, gemini, openrouter]
-  - name: security
+  - name: agent-security
     path: .agents/skills/security/security/SKILL.md
     triggers: [security, injection, secret, auth, permission]
   - name: evals
