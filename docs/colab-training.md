@@ -9,35 +9,48 @@ Use a GPU runtime in Google Colab.
 ```
 
 ```python
-%cd LapisLLM
+%cd /content/LapisLLM
 ```
 
+Run the trainer as a Python module so the repository root is always on the
+import path:
+
 ```python
-!python scripts/colab_train.py
+!python -m scripts.colab_train
 ```
 
 The script installs the project dependencies, checks CUDA, builds the bounded
 pretraining corpus, and launches the training job with `configs/colab.yaml`.
+
+If an older Colab runtime already cloned the repository, refresh it before
+running training:
+
+```python
+%cd /content/LapisLLM
+!git pull --ff-only
+```
 
 ## Smoke test
 
 Use a small corpus before the full run:
 
 ```python
-!python scripts/colab_train.py --smoke-test
+!python -m scripts.colab_train --smoke-test
 ```
 
 ## Resume
 
 ```python
-!python scripts/colab_train.py --resume
+!python -m scripts.colab_train --resume
 ```
 
 ## Limit corpus size
 
 ```python
-!python scripts/colab_train.py --max-chars 50000000
+!python -m scripts.colab_train --max-chars 50000000
 ```
+
+The entry point also supports direct execution with `python scripts/colab_train.py`.
 
 ## Output
 
