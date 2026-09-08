@@ -22,6 +22,7 @@ DEFAULT_CONFIG = REPO_ROOT / "configs" / "tiny.yaml"
 DEFAULT_DATA = TRAINING_DATA_ROOT / "combined.txt"
 
 GENERATED_GIT_PREFIXES = ("checkpoints/", "training_data/")
+HISTORY_GIT_PREFIX = "training_history/"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -85,10 +86,18 @@ def is_generated_path(path: str) -> bool:
     )
 
 
+def is_history_path(path: str) -> bool:
+    return path.replace("\\", "/").startswith(HISTORY_GIT_PREFIX)
+
+
 def clean_generated_artifacts(status: list[str], *, phase: str) -> None:
-    """Restore/remove only generated artifacts, never user-authored files."""
+    """Restore/remove generated artifacts without rejecting training history."""
     generated = [line for line in status if is_generated_path(status_path(line))]
-    protected = [line for line in status if not is_generated_path(status_path(line))]
+    protected = [
+        line
+        for line in status
+        if not is_generated_path(status_path(line)) and not is_history_path(status_path(line))
+    ]
 
     if protected:
         raise RuntimeError(
@@ -118,7 +127,37 @@ def clean_generated_artifacts(status: list[str], *, phase: str) -> None:
         print(color("✓ Removed untracked generated training_data files", OK))
 
 
+def commit_local_history() -> None:
+    """Commit locally-created training history so it can be rebased/pushed safely."""
+    status = git_status()
+    history = [line for line in status if is_history_path(status_path(line))]
+    non_history = [
+        line
+        for line in status
+        if not is_history_path(status_path(line)) and not is_generated_path(status_path(line))
+    ]
+    if non_history:
+        raise RuntimeError(
+            "Working tree has non-generated local changes. Refusing to sync:\n"
+            + "\n".join(non_history)
+        )
+    if not history:
+        return
+
+    run(["git", "add", "training_history"])
+    staged = run(
+        ["git", "diff", "--cached", "--name-only"],
+        capture=True,
+    ).stdout.strip()
+    if staged:
+        run(["git", "commit", "-m", "chore: save local training history"])
+
+
 def git_sync_pull() -> None:
+    # Training history is a legitimate local output of previous runs. Commit it
+    # first so the pull cannot discard it and can rebase it onto remote history.
+    commit_local_history()
+
     status = git_status()
     clean_generated_artifacts(status, phase="pull")
 
@@ -130,7 +169,7 @@ def git_sync_pull() -> None:
         )
 
     print(color("Git", BOLD) + "  pulling origin/main...")
-    run(["git", "pull", "--ff-only", "origin", "main"])
+    run(["git", "pull", "--rebase", "origin", "main"])
     print(color("✓ Git pull completed", OK))
 
 
@@ -145,7 +184,7 @@ def git_sync_push(message: str) -> None:
     non_history = [
         line
         for line in status
-        if not status_path(line).replace("\\", "/").startswith("training_history/")
+        if not is_history_path(status_path(line))
     ]
     if non_history:
         raise RuntimeError(
@@ -195,7 +234,7 @@ def parse_steps_config(path: Path) -> int:
 
 
 def parse_training_line(line: str) -> tuple[int, float | None] | None:
-    match = re.search(r"step=(\d+)\s+loss=([0-9.]+)", line)
+    match = re.search(r"step=(\d+)\s+loss=([0-9.eE+-]+)", line)
     if not match:
         return None
     return int(match.group(1)), float(match.group(2))
@@ -232,7 +271,7 @@ def train_one_run(
         "--config",
         str(config.relative_to(REPO_ROOT)),
         "--device",
-        "cuda",
+        "auto",
         "--data",
         str(corpus.relative_to(REPO_ROOT)),
         "--epochs",
@@ -338,6 +377,7 @@ def train_one_run(
         "timestamp_utc": timestamp,
         "config": str(config.relative_to(REPO_ROOT)),
         "corpus": str(corpus.relative_to(REPO_ROOT)),
+        "device": "auto",
         "target_steps": target_steps,
         "recorded_step": recorded_step,
         "checkpoint_size_bytes": checkpoint_size,
@@ -364,6 +404,7 @@ def write_history(summary: dict) -> Path:
         "",
         f"- Date (UTC): `{summary['timestamp_utc']}`",
         f"- Steps: `{summary['recorded_step']:,}`",
+        f"- Device: `{summary.get('device', 'auto')}`",
         f"- Final loss: `{summary['final_loss']}`",
         f"- Final perplexity: `{summary['final_perplexity']}`",
         f"- Tokens seen: `{summary['tokens_seen']}`",
@@ -489,7 +530,7 @@ def launch_chat() -> None:
             "--checkpoint",
             str(checkpoint.relative_to(REPO_ROOT)),
             "--device",
-            "cuda",
+            "auto",
         ]
     )
 
