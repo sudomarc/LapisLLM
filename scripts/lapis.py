@@ -111,8 +111,6 @@ def clean_generated_artifacts(status: list[str], *, phase: str) -> None:
         run(["git", "restore", "--source=HEAD", "--worktree", "--", *tracked])
         print(color(f"✓ Restored {len(tracked)} tracked generated file(s)", OK))
 
-    # Remove only untracked files in the generated corpus directory.
-    # Ignored checkpoint run data is intentionally preserved.
     if TRAINING_DATA_ROOT.exists():
         run(["git", "clean", "-fd", "--", "training_data"], check=False)
         print(color("✓ Removed untracked generated training_data files", OK))
@@ -312,7 +310,7 @@ def train_one_run(
 
     import torch
 
-    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     recorded_step = int(state.get("step", -1))
     if recorded_step != target_steps:
         raise RuntimeError(
@@ -518,114 +516,63 @@ def train_flow() -> None:
     try:
         runs = int(raw)
     except ValueError as exc:
-        raise RuntimeError("Please enter a positive integer") from exc
+        raise RuntimeError("Run count must be an integer") from exc
     if runs < 1:
-        raise RuntimeError("Number of runs must be at least 1")
+        raise RuntimeError("Run count must be at least 1")
 
-    monitor_raw = input("Learning monitor interval [500]? › ").strip()
-    try:
-        monitor_interval = int(monitor_raw) if monitor_raw else 500
-    except ValueError as exc:
-        raise RuntimeError("Monitor interval must be an integer") from exc
-    if monitor_interval < 1:
-        raise RuntimeError("Monitor interval must be at least 1")
+    if not DEFAULT_DATA.exists():
+        fetch_data()
 
-    if not DEFAULT_CONFIG.exists():
-        raise RuntimeError(f"Training config not found: {DEFAULT_CONFIG}")
-
-    fetch_data()
+    config = DEFAULT_CONFIG
+    monitor_interval = 500
     summaries = []
     for run_number in range(1, runs + 1):
         summary = train_one_run(
             run_number=run_number,
             total_runs=runs,
-            config=DEFAULT_CONFIG,
+            config=config,
             corpus=DEFAULT_DATA,
             monitor_interval=monitor_interval,
         )
-        history_dir = write_history(summary)
+        run_dir = write_history(summary)
+        summary["history_dir"] = str(run_dir.relative_to(REPO_ROOT))
         summaries.append(summary)
-        print()
-        print(color("✓ VERIFIED RUN", OK + BOLD))
-        print(f"  steps       {summary['recorded_step']:,}")
-        print(f"  loss        {summary['final_loss']}")
-        print(f"  perplexity  {summary['final_perplexity']}")
-        print(f"  history     {history_dir.relative_to(REPO_ROOT)}")
+        print(color(f"✓ Run {run_number}/{runs} verified", OK))
 
-    message = f"train: {runs} verified Lapis run{'s' if runs != 1 else ''}"
-    git_sync_push(message)
-
-    print()
-    print(color("All runs complete and history pushed.", OK + BOLD))
+    git_sync_push("chore(training): record verified experiment runs")
     launch_chat()
 
 
-def interactive() -> None:
-    banner()
-    print("[1] Train")
-    print("[2] Resume training")
-    print("[3] Chat")
-    print("[4] Evaluate")
-    print("[5] Training history")
-    print("[6] Compare runs")
-    print("[7] System / GPU info")
-    print()
-    choice = input("› ").strip()
-    if choice == "1":
-        train_flow()
-    elif choice == "2":
-        print(
-            "Resume mode is exposed through scripts/train.py --resume; "
-            "use it after selecting a checkpoint."
-        )
-    elif choice == "3":
-        launch_chat()
-    elif choice == "4":
-        run([sys.executable, "scripts/evaluate.py", "--help"])
-    elif choice == "5":
-        show_history()
-    elif choice == "6":
-        compare_runs()
-    elif choice == "7":
-        system_info()
-    else:
-        raise RuntimeError("Unknown menu selection")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Lapis experiment console")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="LAPIS experiment console")
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser(
-        "train", help="pull, train, verify, push, then launch chat"
-    )
-    subparsers.add_parser(
-        "chat", help="launch the latest locally trained checkpoint"
-    )
-    subparsers.add_parser("history", help="show training history")
-    subparsers.add_parser("compare", help="compare two completed runs")
-    subparsers.add_parser("system", help="show Git/GPU information")
+    subparsers.add_parser("train", help="pull, train, verify, record, push, and chat")
+    subparsers.add_parser("history", help="show recorded training runs")
+    subparsers.add_parser("compare", help="compare two recorded runs")
+    subparsers.add_parser("system", help="show local runtime information")
 
     args = parser.parse_args()
+    banner()
+
     try:
-        if args.command is None:
-            git_sync_pull()
-            interactive()
-        elif args.command == "train":
+        if args.command == "train":
             git_sync_pull()
             train_flow()
-        elif args.command == "chat":
-            launch_chat()
         elif args.command == "history":
             show_history()
         elif args.command == "compare":
             compare_runs()
         elif args.command == "system":
             system_info()
-    except (RuntimeError, subprocess.CalledProcessError, ValueError) as exc:
-        print(color(f"Lapis error: {exc}", ERR), file=sys.stderr)
-        raise SystemExit(1) from exc
+        else:
+            parser.print_help()
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
+        print(color(f"ERROR: {exc}", ERR), file=sys.stderr)
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
