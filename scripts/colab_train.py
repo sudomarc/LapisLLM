@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+# Make the repository root importable when this file is executed directly
+# (e.g. ``python scripts/colab_train.py`` in Google Colab).
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts import _colab_train_impl as _impl
 from scripts._colab_train_impl import *  # noqa: F401,F403
