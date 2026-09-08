@@ -25,9 +25,9 @@ def _absolute_child_paths(command: list[str]) -> list[str]:
 def completed_run_numbers() -> set[int]:
     """Return completed runs while preserving legacy summaries without status."""
     numbers: set[int] = set()
-    if not _impl.HISTORY.is_dir():
+    if not HISTORY.is_dir():
         return numbers
-    for summary in _impl.HISTORY.glob("run-*/summary.json"):
+    for summary in HISTORY.glob("run-*/summary.json"):
         try:
             data = json.loads(summary.read_text(encoding="utf-8"))
             number = int(data["run_number"])
