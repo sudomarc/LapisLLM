@@ -56,7 +56,7 @@ def create_app(checkpoint_path: str, device: torch.device) -> FastAPI:
     except (FileNotFoundError, KeyError, RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Unable to load serving runtime: {exc}") from exc
 
-    app = FastAPI(title="LAPIS API", version="0.1.0")
+    app = FastAPI(title="LAPIS API", version="0.2.0")
 
     @app.get("/v1/models")
     def models():
