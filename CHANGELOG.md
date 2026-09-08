@@ -2,6 +2,37 @@
 
 All notable changes to LapisLLM are documented here.
 
+## [Unreleased]
+
+### Security
+
+- Raised the minimum PyTorch version to 2.14.0 and current maintained FastAPI/Uvicorn/Pydantic floors.
+- Switched checkpoint loading in the trainer, evaluator, generator, terminal chat, and HTTP serving runtime to `weights_only=True`.
+- Added CI dependency vulnerability auditing and Git working-tree/history secret scans.
+- Scoped GitHub Pages write and OIDC permissions to the deployment job.
+
+### Performance
+
+- Changed `TextDataset` to construct sample tensors lazily instead of materializing every dataset tensor during initialization.
+
+### CI
+
+- Added Python 3.11, 3.12, and 3.13 test matrix coverage.
+- Added `pytest-cov` coverage reporting.
+- Added `pip-audit` dependency checks.
+- Added validation on pushes to `maintenance/**` branches.
+
+### Documentation
+
+- Added `CONTRIBUTING.md` and `SECURITY.md`.
+- Removed unused direct `numpy` and `safetensors` dependencies from the runtime package metadata.
+
+### GitHub administration remaining
+
+- `main` branch protection/rulesets still require GitHub repository administration outside the connected integration. The current API access reports `main` as unprotected and no repository rulesets.
+
+---
+
 ## [0.1.1] - 2026-09-06
 
 ### Added
