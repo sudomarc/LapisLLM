@@ -39,36 +39,38 @@ The checkpoint can then be loaded by the generation and chat interfaces.
 
 
 class TextDataset(Dataset):
-    """Fixed-length causal language-modeling examples."""
+    """Lazy fixed-length causal language-modeling examples."""
 
     def __init__(self, tokens: list[int], seq_len: int, pad_id: int):
         if seq_len < 2:
             raise ValueError("seq_len must be at least 2")
-        needed = seq_len + 1
-        self.samples: list[tuple[torch.Tensor, torch.Tensor]] = []
-        for start in range(0, max(1, len(tokens) - 1), seq_len):
-            chunk = tokens[start : start + needed]
-            real_length = len(chunk)
-            if real_length < needed:
-                chunk += [pad_id] * (needed - real_length)
-            sample = torch.tensor(chunk[:needed], dtype=torch.long)
-            labels = sample.clone()
-            if real_length < needed:
-                labels[real_length:] = -100
-            self.samples.append((sample, labels))
-        if not self.samples:
-            self.samples.append(
-                (
-                    torch.full((needed,), pad_id, dtype=torch.long),
-                    torch.full((needed,), -100, dtype=torch.long),
-                )
-            )
+        self.tokens = tokens
+        self.seq_len = seq_len
+        self.pad_id = pad_id
+        self.needed = seq_len + 1
+        self.sample_count = max(1, (max(0, len(tokens) - 2) // seq_len) + 1)
+        if len(tokens) <= 1:
+            self.sample_count = 1
 
     def __len__(self) -> int:
-        return len(self.samples)
+        return self.sample_count
 
     def __getitem__(self, index: int):
-        return self.samples[index]
+        if index < 0 or index >= self.sample_count:
+            raise IndexError(index)
+        start = index * self.seq_len
+        chunk = self.tokens[start : start + self.needed]
+        real_length = len(chunk)
+        if real_length == 0:
+            chunk = [self.pad_id] * self.needed
+            real_length = 0
+        elif real_length < self.needed:
+            chunk += [self.pad_id] * (self.needed - real_length)
+        sample = torch.tensor(chunk[: self.needed], dtype=torch.long)
+        labels = sample.clone()
+        if real_length < self.needed:
+            labels[real_length:] = -100
+        return sample, labels
 
 
 def load_yaml(path: str) -> dict:
@@ -408,7 +410,7 @@ def main() -> None:
     tokens_seen = 0
 
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=True)
         checkpoint_config = checkpoint.get("config", {})
         checkpoint_vocab = checkpoint_config.get("model", {}).get("vocab_size")
         if checkpoint_vocab is not None and int(checkpoint_vocab) != model_config.vocab_size:
