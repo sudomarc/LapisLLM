@@ -23,20 +23,79 @@ lapis/
 │   ├── small.yaml
 │   └── base.yaml
 
-│
 ├── src/
 │   └── lapis/
 │       ├── __init__.py
 │       ├── version.py
+│       │
 │       ├── config/
+│       │   ├── __init__.py
+│       │   ├── model_config.py
+│       │   ├── training_config.py
+│       │   └── data_config.py
+│       │
 │       ├── tokenizer/
+│       │   ├── __init__.py
+│       │   ├── tokenizer.py
+│       │   ├── train.py
+│       │   └── special_tokens.py
+│       │
 │       ├── data/
+│       │   ├── __init__.py
+│       │   ├── sources.py
+│       │   ├── downloader.py
+│       │   ├── cleaner.py
+│       │   ├── filters.py
+│       │   ├── deduplication.py
+│       │   ├── packing.py
+│       │   ├── dataset.py
+│       │   └── manifests.py
+│       │
 │       ├── model/
+│       │   ├── __init__.py
+│       │   ├── embeddings.py
+│       │   ├── rope.py
+│       │   ├── attention.py
+│       │   ├── normalization.py
+│       │   ├── mlp.py
+│       │   ├── block.py
+│       │   ├── transformer.py
+│       │   └── lapis_model.py
+│       │
 │       ├── training/
+│       │   ├── __init__.py
+│       │   ├── trainer.py
+│       │   ├── optimizer.py
+│       │   ├── scheduler.py
+│       │   ├── checkpointing.py
+│       │   ├── precision.py
+│       │   ├── distributed.py
+│       │   └── metrics.py
+│       │
 │       ├── evaluation/
+│       │   ├── __init__.py
+│       │   ├── perplexity.py
+│       │   ├── evaluator.py
+│       │   └── benchmarks.py
+│       │
 │       ├── inference/
+│       │   ├── __init__.py
+│       │   ├── generate.py
+│       │   ├── sampling.py
+│       │   ├── kv_cache.py
+│       │   └── chat.py
+│       │
 │       ├── export/
+│       │   ├── __init__.py
+│       │   ├── safetensors.py
+│       │   └── gguf.py
+│       │
 │       └── api/
+│           ├── __init__.py
+│           ├── app.py
+│           ├── routes.py
+│           ├── schemas.py
+│           └── streaming.py
 
 ├── scripts/
 │   ├── train_tokenizer.py
@@ -53,7 +112,8 @@ lapis/
 │   ├── data/
 │   ├── model/
 │   ├── training/
-│   └── inference/
+│   ├── inference/
+│   └── api/
 
 ├── data/
 │   ├── raw/
