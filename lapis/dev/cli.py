@@ -6,6 +6,7 @@ commands remain available for compatibility but are not the default UX.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -24,7 +25,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _run(module: str, *args: str) -> None:
-    result = subprocess.run([sys.executable, "-m", module, *args], cwd=REPO_ROOT)
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-u", "-m", module, *args],
+        cwd=REPO_ROOT,
+        env=env,
+    )
     raise typer.Exit(result.returncode)
 
 
@@ -36,15 +43,28 @@ def train(
     checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
     epochs: int = typer.Option(1000, "--epochs", min=1),
     monitor_interval: int = typer.Option(500, "--monitor-interval", min=0),
-    no_tui: bool = typer.Option(False, "--no-tui"),
+    monitor_sample_tokens: int = typer.Option(48, "--monitor-sample-tokens", min=1),
+    monitor_prompts: str | None = typer.Option(None, "--monitor-prompts"),
+    monitor_log: Path | None = typer.Option(None, "--monitor-log"),
+    resume: Path | None = typer.Option(None, "--resume"),
 ) -> None:
-    args = ["--config", str(config), "--epochs", str(epochs), "--checkpoint", str(checkpoint), "--monitor-interval", str(monitor_interval)]
+    args = [
+        "--config", str(config),
+        "--epochs", str(epochs),
+        "--checkpoint", str(checkpoint),
+        "--monitor-interval", str(monitor_interval),
+        "--monitor-sample-tokens", str(monitor_sample_tokens),
+    ]
     if device:
         args += ["--device", device]
     if data:
         args += ["--data", str(data)]
-    if no_tui:
-        args += ["--no-tui"]
+    if monitor_prompts:
+        args += ["--monitor-prompts", monitor_prompts]
+    if monitor_log:
+        args += ["--monitor-log", str(monitor_log)]
+    if resume:
+        args += ["--resume", str(resume)]
     _run("scripts.train", *args)
 
 
@@ -66,7 +86,16 @@ def generate(
     top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
     device: str = typer.Option("auto", "--device"),
 ) -> None:
-    _run("scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device)
+    _run(
+        "scripts.generate",
+        "--checkpoint", str(checkpoint),
+        "--prompt", prompt,
+        "--max-new-tokens", str(max_new_tokens),
+        "--temperature", str(temperature),
+        "--top-k", str(top_k),
+        "--top-p", str(top_p),
+        "--device", device,
+    )
 
 
 @app.command("inspect")
@@ -83,7 +112,14 @@ def inspect(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--ch
     table = Table(title=f"Checkpoint: {checkpoint}")
     table.add_column("Field")
     table.add_column("Value")
-    for key, value in (("step", data.get("step", "—")), ("epoch", data.get("epoch", "—")), ("tokenizer_version", data.get("tokenizer_version", "—")), ("vocab_size", model.get("vocab_size", "—")), ("layers", model.get("num_layers", "—")), ("hidden_size", model.get("hidden_size", "—"))):
+    for key, value in (
+        ("step", data.get("step", "—")),
+        ("epoch", data.get("epoch", "—")),
+        ("tokenizer_version", data.get("tokenizer_version", "—")),
+        ("vocab_size", model.get("vocab_size", "—")),
+        ("layers", model.get("num_layers", "—")),
+        ("hidden_size", model.get("hidden_size", "—")),
+    ):
         table.add_row(key, str(value))
     console.print(table)
 
