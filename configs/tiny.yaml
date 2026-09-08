@@ -1,4 +1,4 @@
-# Lapis Small: compact enough for Colab/local experiments, but large enough to learn useful language structure.
+# Lapis Tiny: compact enough for Colab/local experiments, but large enough to learn useful language structure.
 model:
   vocab_size: 4096
   hidden_size: 256
