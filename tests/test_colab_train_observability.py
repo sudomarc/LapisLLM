@@ -19,16 +19,24 @@ def test_training_metric_regex_extracts_live_metrics() -> None:
     assert int(token_match.group("tokens").replace(",", "")) == 1_280_000
 
 
-def test_completed_run_numbers_only_accept_completed_summaries(tmp_path: Path, monkeypatch) -> None:
+def test_completed_run_numbers_require_explicit_completed_status(
+    tmp_path: Path, monkeypatch
+) -> None:
     history = tmp_path / "training_history"
     (history / "run-001").mkdir(parents=True)
     (history / "run-002").mkdir(parents=True)
     (history / "run-003").mkdir(parents=True)
-    (history / "run-001" / "summary.json").write_text(json.dumps({"run_number": 1, "status": "completed"}))
-    (history / "run-002" / "summary.json").write_text(json.dumps({"run_number": 2, "status": "failed"}))
-    (history / "run-003" / "summary.json").write_text(json.dumps({"run_number": 3}))
+    (history / "run-001" / "summary.json").write_text(
+        json.dumps({"run_number": 1, "status": "completed"})
+    )
+    (history / "run-002" / "summary.json").write_text(
+        json.dumps({"run_number": 2, "status": "failed"})
+    )
+    (history / "run-003" / "summary.json").write_text(
+        json.dumps({"run_number": 3})
+    )
     monkeypatch.setattr(colab_train, "HISTORY", history)
-    assert colab_train.completed_run_numbers() == {1, 3}
+    assert colab_train.completed_run_numbers() == {1}
 
 
 def test_format_duration_is_stable() -> None:
