@@ -13,6 +13,7 @@ from scripts._colab_train_impl import *  # noqa: F401,F403
 _ORIGINAL_TRAIN_ONE_RUN = _impl.train_one_run
 _ORIGINAL_POPEN = subprocess.Popen
 _PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
+HISTORY = _impl.HISTORY
 
 
 def _absolute_child_paths(command: list[str]) -> list[str]:
