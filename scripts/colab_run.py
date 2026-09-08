@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """One-command Colab training orchestrator for LapisLLM.
 
-Flow:
-    clone/reuse checkout -> pull main -> install -> validate -> tests
-    -> build corpus when missing -> run N verified training runs
-    -> record history after every run -> push training history to main
+Authentication for GitHub is deliberately kept out of command lines and remotes.
+The preferred source in Google Colab is a secret named ``GITHUB_TOKEN``.
 
-Large generated artifacts (training_data/, checkpoints/) remain git-ignored.
-The training UI uses Rich when available and falls back to plain text.
+Flow:
+    clone/reuse checkout -> authenticate -> pull -> install -> validate -> tests
+    -> build/reuse corpus -> run verified training runs -> write history
+    -> commit history -> push main
+
+Generated artifacts such as ``training_data/`` and ``checkpoints/`` stay local.
+Only lightweight training history is committed.
 """
 
 from __future__ import annotations
@@ -17,23 +20,14 @@ import getpass
 import json
 import os
 import re
-import signal
+import stat
 import subprocess
-import sys
+import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-
-try:
-    from rich.console import Console, Group
-    from rich.live import Live
-    from rich.panel import Panel
-    from rich.table import Table
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-
 
 REPO_URL = "https://github.com/sudomarc/LapisLLM.git"
 REPO_ROOT = Path("/content/LapisLLM")
@@ -50,34 +44,96 @@ REQUIRED_FILES = (
 )
 
 
-def print_banner(title: str) -> None:
-    if RICH_AVAILABLE:
-        Console().rule(f"[bold cyan]{title}[/]")
-    else:
-        print("\n" + "=" * 70)
-        print(title)
-        print("=" * 70)
-
-
 def run(
     cmd: list[str],
     *,
     check: bool = True,
     capture: bool = False,
     env: dict[str, str] | None = None,
+    cwd: Path = REPO_ROOT,
 ) -> subprocess.CompletedProcess[str]:
+    """Run a command without ever printing environment variables."""
     merged_env = os.environ.copy()
     if env:
         merged_env.update(env)
     print("$", " ".join(cmd))
     return subprocess.run(
         cmd,
-        cwd=REPO_ROOT,
+        cwd=cwd,
         check=check,
         text=True,
         capture_output=capture,
         env=merged_env,
     )
+
+
+def get_github_token() -> str | None:
+    """Resolve the GitHub PAT from Colab Secret first, then environment aliases.
+
+    Colab's secret store is accessed lazily so the module remains usable outside
+    Colab. Empty values are ignored.
+    """
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "LAPIS_GITHUB_TOKEN"):
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value.strip()
+
+    try:
+        from google.colab import userdata  # type: ignore
+    except (ImportError, ModuleNotFoundError):
+        return None
+
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "LAPIS_GITHUB_TOKEN"):
+        try:
+            value = userdata.get(name)
+        except Exception:
+            continue
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+@contextmanager
+def github_auth_env(token: str):
+    """Expose a token to Git through a short-lived ``GIT_ASKPASS`` helper.
+
+    The token is not placed in ``git remote -v``, process arguments, repository
+    configuration, command output, or a tracked file. The helper directory is
+    deleted as soon as the Git operation completes.
+    """
+    if not token:
+        yield {}
+        return
+
+    with tempfile.TemporaryDirectory(prefix="lapis-git-auth-") as tmp:
+        askpass = Path(tmp) / "askpass.sh"
+        askpass.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;\n"
+            "  *) printf '%s\\n' \"$LAPIS_GIT_TOKEN\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        yield {
+            "GIT_ASKPASS": str(askpass),
+            "GIT_TERMINAL_PROMPT": "0",
+            "LAPIS_GIT_TOKEN": token,
+        }
+
+
+def git_run(
+    cmd: list[str],
+    *,
+    token: str | None = None,
+    check: bool = True,
+    capture: bool = False,
+    cwd: Path = REPO_ROOT,
+) -> subprocess.CompletedProcess[str]:
+    """Run a Git command with optional ephemeral token authentication."""
+    with github_auth_env(token or "") as auth_env:
+        return run(cmd, check=check, capture=capture, env=auth_env, cwd=cwd)
 
 
 def prompt_int(label: str, default: int, minimum: int = 0) -> int:
@@ -93,11 +149,13 @@ def prompt_int(label: str, default: int, minimum: int = 0) -> int:
     return value
 
 
-def bootstrap_repo() -> None:
-    print_banner("LAPISLLM — INITIALISATION")
+def bootstrap_repo(token: str | None) -> None:
+    print("\n" + "=" * 70)
+    print("LAPISLLM — INITIALISATION")
+    print("=" * 70)
     if not REPO_ROOT.exists():
         print("Clonage du dépôt...")
-        subprocess.run(
+        git_run(
             [
                 "git",
                 "-c",
@@ -115,10 +173,11 @@ def bootstrap_repo() -> None:
                 REPO_URL,
                 str(REPO_ROOT),
             ],
-            check=True,
+            token=token,
+            cwd=Path("/content"),
         )
     elif not (REPO_ROOT / ".git").exists():
-        raise RuntimeError(f"{REPO_ROOT} exists but is not a Git repository.")
+        raise RuntimeError(f"{REPO_ROOT} existe mais n'est pas un dépôt Git.")
     print(f"Répertoire : {REPO_ROOT}")
 
 
@@ -129,16 +188,18 @@ def path_from_status(status_line: str) -> str:
     return path.replace("\\", "/")
 
 
-def sync_pull() -> None:
-    print_banner("GIT — SYNCHRONISATION")
+def sync_pull(token: str | None) -> None:
+    print("\n" + "=" * 70)
+    print("GIT — SYNCHRONISATION")
+    print("=" * 70)
     for key, value in (
         ("user.name", "LapisLLM Colab"),
         ("user.email", "lapisllm-colab@users.noreply.github.com"),
     ):
-        if not run(["git", "config", key], check=False, capture=True).stdout.strip():
-            run(["git", "config", key, value])
+        if not git_run(["git", "config", key], check=False, capture=True).stdout.strip():
+            git_run(["git", "config", key, value])
 
-    status = run(
+    status = git_run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
         capture=True,
     ).stdout.splitlines()
@@ -149,29 +210,31 @@ def sync_pull() -> None:
     ]
     if protected:
         raise RuntimeError(
-            "Refus de synchroniser : des modifications locales hors "
-            "training_history existent.\n" + "\n".join(protected)
+            "Refus de synchroniser : modifications locales hors training_history :\n"
+            + "\n".join(protected)
         )
 
     history_changes = [
         line for line in status if path_from_status(line).startswith("training_history/")
     ]
     if history_changes:
-        run(["git", "add", "training_history"])
-        staged = run(
+        git_run(["git", "add", "training_history"])
+        staged = git_run(
             ["git", "diff", "--cached", "--name-only"],
             capture=True,
         ).stdout.strip()
         if staged:
-            run(["git", "commit", "-m", "chore: save local training history"])
+            git_run(["git", "commit", "-m", "chore: save local training history"])
 
-    run(["git", "fetch", "origin", "main"])
-    run(["git", "pull", "--rebase", "origin", "main"])
+    git_run(["git", "fetch", "origin", "main"], token=token)
+    git_run(["git", "pull", "--rebase", "origin", "main"], token=token)
     print("✅ Git pull terminé.")
 
 
 def validate_project() -> None:
-    print_banner("VALIDATION DU PROJET")
+    print("\n" + "=" * 70)
+    print("VALIDATION DU PROJET")
+    print("=" * 70)
     missing = [path for path in REQUIRED_FILES if not (REPO_ROOT / path).exists()]
     if missing:
         raise RuntimeError("Fichiers requis absents :\n" + "\n".join(missing))
@@ -180,23 +243,19 @@ def validate_project() -> None:
 
 
 def install_project() -> None:
-    print_banner("INSTALLATION")
-    run([sys.executable, "-m", "pip", "install", "-e", ".[data]", "-q"])
+    print("\n" + "=" * 70)
+    print("INSTALLATION")
+    print("=" * 70)
+    run([os.sys.executable, "-m", "pip", "install", "-e", ".[data]", "-q"])
     print("✅ Dépendances installées.")
 
 
-def inspect_torch() -> str:
-    print_banner("ENVIRONNEMENT TORCH")
-    import torch
-
-    cuda = bool(torch.cuda.is_available())
-    print(f"PyTorch : {torch.__version__}")
-    print(f"CUDA disponible : {cuda}")
-    if cuda:
-        print(f"GPU : {torch.cuda.get_device_name(0)}")
-    else:
-        print("GPU : aucun")
-    return "cuda" if cuda else "cpu"
+def validate_tests() -> None:
+    print("\n" + "=" * 70)
+    print("VALIDATION — TESTS")
+    print("=" * 70)
+    run([os.sys.executable, "-m", "pytest", "-q"])
+    print("✅ Tests réussis.")
 
 
 def parse_max_steps(config: Path) -> int:
@@ -212,17 +271,18 @@ def parse_max_steps(config: Path) -> int:
 
 
 def build_corpus(max_wiki_articles: int = 40, max_doc_files: int = 20) -> None:
-    print_banner("DONNÉES")
+    print("\n" + "=" * 70)
+    print("DONNÉES")
+    print("=" * 70)
     TRAINING_DATA_ROOT.mkdir(parents=True, exist_ok=True)
     if DEFAULT_DATA.exists() and DEFAULT_DATA.stat().st_size >= 100_000:
         print(f"✅ Corpus existant : {DEFAULT_DATA.stat().st_size:,} octets")
         return
 
-    print("📚 Corpus absent ou trop petit.")
-    print("Construction du corpus...")
+    print("Corpus absent ou trop petit. Construction...")
     run(
         [
-            sys.executable,
+            os.sys.executable,
             "scripts/fetch_training_data.py",
             "--output-dir",
             "training_data",
@@ -237,23 +297,6 @@ def build_corpus(max_wiki_articles: int = 40, max_doc_files: int = 20) -> None:
     print(f"✅ Corpus prêt : {DEFAULT_DATA.stat().st_size:,} octets")
 
 
-def progress_bar(step: int, total: int, width: int = 34) -> str:
-    ratio = min(1.0, max(0.0, step / max(1, total)))
-    filled = int(width * ratio)
-    return "[" + "█" * filled + "░" * (width - filled) + "]"
-
-
-def format_eta(seconds: float | None) -> str:
-    if seconds is None or seconds < 0:
-        return "--"
-    seconds_i = int(seconds)
-    minutes, seconds_i = divmod(seconds_i, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours}h {minutes:02d}m"
-    return f"{minutes}m {seconds_i:02d}s"
-
-
 def parse_training_line(line: str) -> tuple[int, float] | None:
     match = re.search(r"step=(\d+)\s+loss=([0-9.eE+-]+)", line)
     if not match:
@@ -261,93 +304,115 @@ def parse_training_line(line: str) -> tuple[int, float] | None:
     return int(match.group(1)), float(match.group(2))
 
 
-def terminate_process_group(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=10)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-
-
-def gpu_stats() -> tuple[str, str] | None:
-    """Return GPU name and utilization/VRAM via nvidia-smi when available."""
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=name,utilization.gpu,memory.used,memory.total",
-                "--format=csv,noheader,nounits",
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    except OSError:
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    first = result.stdout.strip().splitlines()[0]
-    parts = [part.strip() for part in first.split(",")]
-    if len(parts) != 4:
-        return None
-    name, util, used, total = parts
-    return name, f"{util}% GPU • {used}/{total} MiB"
-
-
-def render_dashboard(
+def train_one_run(
     *,
-    step: int,
-    total: int,
-    loss: float | None,
-    speed: float,
-    eta: str,
-    device: str,
-    gpu_name: str | None,
-    gpu_info: str | None,
     run_number: int,
     total_runs: int,
-    elapsed: float,
-    last_lines: list[str],
-) -> object:
-    pct = 100.0 * step / max(1, total)
-    metrics = Table.grid(expand=True, padding=(0, 1))
-    metrics.add_column(ratio=1)
-    metrics.add_column(ratio=1)
-    metrics.add_column(ratio=1)
-    metrics.add_row(
-        f"[bold]Step[/] {step:,}/{total:,}",
-        f"[bold]Loss[/] {loss:.5f}" if loss is not None else "[bold]Loss[/] --",
-        f"[bold]Speed[/] {speed:.2f} step/s",
-    )
-    metrics.add_row(
-        f"[bold]Progress[/] {pct:5.1f}%",
-        f"[bold]ETA[/] {eta}",
-        f"[bold]Elapsed[/] {format_eta(elapsed)}",
-    )
-    metrics.add_row(
-        f"[bold]Device[/] {device}",
-        f"[bold]Run[/] {run_number}/{total_runs}",
-        f"[bold]GPU[/] {gpu_name or 'CPU'}",
-    )
-    if gpu_info:
-        metrics.add_row("[bold]GPU stats[/]", gpu_info, "")
+    monitor_interval: int,
+    monitor_sample_tokens: int,
+    prompts: str | None,
+    device: str,
+    seed: int,
+) -> dict:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    run_id = f"run-{timestamp}-{uuid.uuid4().hex[:6]}"
+    local_dir = CHECKPOINT_ROOT / run_id
+    local_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = local_dir / "checkpoint.pt"
+    monitor_log = local_dir / "learning_monitor.jsonl"
+    target_steps = parse_max_steps(DEFAULT_CONFIG)
 
-    bar = progress_bar(step, total, 54)
-    progress_panel = Panel(f"[cyan]{bar}[/]", title="TRAINING", border_style="cyan")
+    cmd = [
+        os.sys.executable,
+        "scripts/train.py",
+        "--config",
+        str(DEFAULT_CONFIG.relative_to(REPO_ROOT)),
+        "--data",
+        str(DEFAULT_DATA.relative_to(REPO_ROOT)),
+        "--checkpoint",
+        str(checkpoint.relative_to(REPO_ROOT)),
+        "--device",
+        device,
+        "--seed",
+        str(seed),
+        "--monitor-interval",
+        str(monitor_interval),
+        "--monitor-sample-tokens",
+        str(monitor_sample_tokens),
+        "--monitor-log",
+        str(monitor_log.relative_to(REPO_ROOT)),
+    ]
+    if prompts:
+        cmd += ["--monitor-prompts", prompts]
 
-    log_text = "\n".join(last_lines[-8:]) if last_lines else "Waiting for training output..."
-    log_panel = Panel(log_text, title="LIVE OUTPUT", border_style="blue")
-    return Group(Panel(metrics, title="LAPISLLM • TRAINING DASHBOARD", border_style="cyan"), progress_panel, log_panel)
+    print("\n" + "=" * 70)
+    print(f"RUN {run_number}/{total_runs}")
+    print("=" * 70)
+    print(f"id          {run_id}")
+    print(f"config      {DEFAULT_CONFIG.relative_to(REPO_ROOT)}")
+    print(f"target      {target_steps:,} optimizer steps")
+    print(f"checkpoint  {checkpoint}")
+    print(f"seed        {seed}")
+
+    start = time.monotonic()
+    process = subprocess.Popen(
+        cmd,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    last_loss: float | None = None
+    assert process.stdout is not None
+    try:
+        for raw_line in process.stdout:
+            line = raw_line.rstrip()
+            if line:
+                print(line)
+            parsed = parse_training_line(line)
+            if parsed:
+                _, last_loss = parsed
+    finally:
+        process.stdout.close()
+    return_code = process.wait()
+    elapsed = time.monotonic() - start
+    if return_code != 0:
+        raise RuntimeError(f"Training failed with exit code {return_code}")
+
+    verification = verify_run(checkpoint, monitor_log, target_steps)
+    metrics = verification["final_metrics"]
+    final_loss = float(metrics.get("loss", last_loss or 0.0))
+    final_perplexity = float(metrics.get("perplexity", 2.718281828 ** final_loss))
+    tokens_seen = int(metrics.get("tokens_seen", 0))
+    summary = {
+        "run_id": run_id,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "run_number": run_number,
+        "total_runs": total_runs,
+        "recorded_step": verification["recorded_step"],
+        "final_loss": final_loss,
+        "final_perplexity": final_perplexity,
+        "tokens_seen": tokens_seen,
+        "elapsed_seconds": elapsed,
+        "device": device,
+        "checkpoint_size_bytes": verification["checkpoint_size_bytes"],
+        "monitor_records": verification["monitor_records"],
+        "samples": verification["final_samples"],
+    }
+    write_history(summary)
+    print("✅ RUN VERIFIED")
+    print(f"steps       : {summary['recorded_step']:,}")
+    print(f"loss        : {summary['final_loss']}")
+    print(f"perplexity  : {summary['final_perplexity']}")
+    print(f"duration    : {summary['elapsed_seconds']:.1f}s")
+    print(f"history     : {HISTORY_ROOT / run_id}")
+    return summary
 
 
 def verify_run(checkpoint: Path, monitor_log: Path, expected_steps: int) -> dict:
     if not checkpoint.exists():
         raise RuntimeError(f"Checkpoint absent : {checkpoint}")
-
     size = checkpoint.stat().st_size
     if size < 1_000_000:
         raise RuntimeError(f"Checkpoint suspectement petit : {size} octets")
@@ -366,10 +431,8 @@ def verify_run(checkpoint: Path, monitor_log: Path, expected_steps: int) -> dict
         for line in monitor_log.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 records.append(json.loads(line))
-
     metrics = [item for item in records if item.get("type") == "metrics"]
     samples = [item for item in records if item.get("type") == "samples"]
-
     return {
         "recorded_step": recorded_step,
         "checkpoint_size_bytes": size,
@@ -385,7 +448,6 @@ def write_history(summary: dict) -> Path:
     (run_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-
     lines = [
         f"# {summary['run_id']}",
         "",
@@ -402,409 +464,143 @@ def write_history(summary: dict) -> Path:
         "",
     ]
     for sample in summary.get("samples", []):
-        lines += [
-            f"### {sample.get('prompt', '<unknown>')}",
-            "",
-            sample.get("completion") or "<EOS>",
-            "",
-        ]
+        lines.extend(
+            [
+                f"### {sample.get('prompt', '<unknown>')}",
+                "",
+                sample.get("completion") or "<EOS>",
+                "",
+            ]
+        )
     (run_dir / "samples.md").write_text("\n".join(lines), encoding="utf-8")
     return run_dir
 
 
-def train_one_run(
-    *,
-    run_number: int,
-    total_runs: int,
-    config: Path,
-    data: Path,
-    monitor_interval: int,
-    device: str,
-    seed: int,
-) -> dict:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    run_id = f"run-{timestamp}-{uuid.uuid4().hex[:6]}"
-    local_dir = CHECKPOINT_ROOT / run_id
-    local_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = local_dir / "checkpoint.pt"
-    monitor_log = local_dir / "learning_monitor.jsonl"
-    target_steps = parse_max_steps(config)
+def detect_device() -> str:
+    import torch
 
-    print_banner(f"RUN {run_number}/{total_runs}")
-    print(f"id          {run_id}")
-    print(f"config      {config.relative_to(REPO_ROOT)}")
-    print(f"target      {target_steps:,} optimizer steps")
-    print(f"checkpoint  {checkpoint.relative_to(REPO_ROOT)}")
-    print(f"seed        {seed}")
-    print()
-
-    command = [
-        sys.executable,
-        "-u",
-        "-m",
-        "scripts.train",
-        "--config",
-        str(config.relative_to(REPO_ROOT)),
-        "--device",
-        device,
-        "--data",
-        str(data.relative_to(REPO_ROOT)),
-        "--epochs",
-        "1000",
-        "--checkpoint",
-        str(checkpoint.relative_to(REPO_ROOT)),
-        "--monitor-interval",
-        str(monitor_interval),
-        "--monitor-sample-tokens",
-        "64",
-        "--monitor-log",
-        str(monitor_log.relative_to(REPO_ROOT)),
-        "--seed",
-        str(seed),
-    ]
-
-    started = time.monotonic()
-    output_tail: list[str] = []
-    last_lines: list[str] = []
-    last_step = 0
-    last_loss: float | None = None
-    process = subprocess.Popen(
-        command,
-        cwd=REPO_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        start_new_session=True,
-    )
-
-    assert process.stdout is not None
-    live = Live(console=Console(), refresh_per_second=4) if RICH_AVAILABLE else None
-    if live:
-        live.start()
-    try:
-        for raw_line in process.stdout:
-            line = raw_line.rstrip("\n")
-            if line.strip():
-                output_tail.append(line)
-                last_lines.append(line[-160:])
-                if len(output_tail) > 80:
-                    output_tail.pop(0)
-                if len(last_lines) > 12:
-                    last_lines.pop(0)
-
-            parsed = parse_training_line(line)
-            elapsed = time.monotonic() - started
-            if parsed:
-                last_step, last_loss = parsed
-                speed = last_step / elapsed if elapsed > 0 else 0.0
-                eta_seconds = (target_steps - last_step) / speed if speed > 0 else None
-                gpu = gpu_stats()
-                gpu_name = gpu[0] if gpu else None
-                gpu_info = gpu[1] if gpu else None
-                if live:
-                    live.update(
-                        render_dashboard(
-                            step=last_step,
-                            total=target_steps,
-                            loss=last_loss,
-                            speed=speed,
-                            eta=format_eta(eta_seconds),
-                            device=device,
-                            gpu_name=gpu_name,
-                            gpu_info=gpu_info,
-                            run_number=run_number,
-                            total_runs=total_runs,
-                            elapsed=elapsed,
-                            last_lines=last_lines,
-                        ),
-                        refresh=True,
-                    )
-                else:
-                    print(
-                        f"\r{progress_bar(last_step, target_steps)} "
-                        f"{last_step:5,d}/{target_steps:,} "
-                        f"{last_step / target_steps * 100:6.2f}% "
-                        f"loss={last_loss:.4f} "
-                        f"{speed:.2f} step/s ETA {format_eta(eta_seconds)}",
-                        end="",
-                        flush=True,
-                    )
-            elif live and (line.startswith("Prompt :") or line.startswith("Lapis  :")):
-                speed = last_step / elapsed if elapsed > 0 else 0.0
-                eta_seconds = (target_steps - last_step) / speed if speed > 0 else None
-                gpu = gpu_stats()
-                live.update(
-                    render_dashboard(
-                        step=last_step,
-                        total=target_steps,
-                        loss=last_loss,
-                        speed=speed,
-                        eta=format_eta(eta_seconds),
-                        device=device,
-                        gpu_name=gpu[0] if gpu else None,
-                        gpu_info=gpu[1] if gpu else None,
-                        run_number=run_number,
-                        total_runs=total_runs,
-                        elapsed=elapsed,
-                        last_lines=last_lines,
-                    ),
-                    refresh=True,
-                )
-            elif not live and line.strip():
-                print(line)
-    except KeyboardInterrupt:
-        print("\n⚠️ Interruption demandée : arrêt propre du processus...")
-        terminate_process_group(process)
-        raise KeyboardInterrupt from None
-    finally:
-        if live:
-            live.stop()
-
-    print()
-    return_code = process.wait()
-    elapsed = time.monotonic() - started
-    if return_code != 0:
-        diagnostic = "\n".join(output_tail[-20:])
-        raise RuntimeError(
-            f"Training failed (exit {return_code}) for {run_id}\n{diagnostic}"
-        )
-
-    verification = verify_run(checkpoint, monitor_log, target_steps)
-    metrics = verification["final_metrics"]
-    return {
-        "run_id": run_id,
-        "run_number": run_number,
-        "total_runs": total_runs,
-        "timestamp_utc": timestamp,
-        "config": str(config.relative_to(REPO_ROOT)),
-        "data": str(data.relative_to(REPO_ROOT)),
-        "device": device,
-        "seed": seed,
-        "target_steps": target_steps,
-        "recorded_step": verification["recorded_step"],
-        "checkpoint_size_bytes": verification["checkpoint_size_bytes"],
-        "elapsed_seconds": round(elapsed, 3),
-        "final_loss": metrics.get("loss", last_loss),
-        "final_perplexity": metrics.get("perplexity"),
-        "tokens_seen": metrics.get("tokens_seen"),
-        "monitor_records": verification["monitor_records"],
-        "samples": verification["final_samples"],
-    }
+    if torch.cuda.is_available():
+        print(f"CUDA : True | GPU : {torch.cuda.get_device_name(0)}")
+        return "cuda"
+    print("CUDA : False | GPU : aucun")
+    return "cpu"
 
 
-def run_tests() -> None:
-    print_banner("VALIDATION — TESTS")
-    result = run([sys.executable, "-m", "pytest", "-q"], check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"pytest a échoué avec le code {result.returncode}")
-    print("✅ Tests réussis.")
-
-
-def get_github_token() -> str | None:
-    for name in ("GITHUB_TOKEN", "GH_TOKEN"):
-        token = os.environ.get(name)
-        if token:
-            return token.strip()
-
-    try:
-        from google.colab import userdata
-
-        token = userdata.get("GITHUB_TOKEN")
-        if token:
-            return str(token).strip()
-    except Exception:
-        pass
-    return None
-
-
-def push_history() -> None:
-    print_banner("GIT — PUSH DE L'HISTORIQUE")
-    status = run(
+def push_history(token: str | None) -> bool:
+    print("\n" + "=" * 70)
+    print("GIT — PUSH DE L'HISTORIQUE")
+    print("=" * 70)
+    status = git_run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
         capture=True,
     ).stdout.splitlines()
+    history_changes = [
+        line for line in status if path_from_status(line).startswith("training_history/")
+    ]
     protected = [
-        line
-        for line in status
-        if not path_from_status(line).startswith("training_history/")
+        line for line in status if not path_from_status(line).startswith("training_history/")
     ]
     if protected:
         raise RuntimeError(
-            "Refus de push : modifications hors training_history détectées.\n"
+            "Refus de pousser : modifications locales hors training_history :\n"
             + "\n".join(protected)
         )
+    if history_changes:
+        git_run(["git", "add", "training_history"])
+        staged = git_run(
+            ["git", "diff", "--cached", "--name-only"],
+            capture=True,
+        ).stdout.strip()
+        if staged:
+            git_run(["git", "commit", "-m", "chore: record automated training run history"])
 
-    run(["git", "add", "training_history"])
-    staged = run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture=True,
-    ).stdout.strip()
-    if not staged:
-        print("✅ Aucun nouvel historique à pousser.")
-        return
+    if token:
+        result = git_run(["git", "push", "origin", "main"], token=token, check=False)
+        if result.returncode == 0:
+            print("✅ Historique poussé vers origin/main avec le secret Colab.")
+            return True
+        print(f"❌ git push a échoué avec le token (code {result.returncode}).")
+        return False
 
-    run(["git", "commit", "-m", "chore: record automated training run history"])
+    print("Aucun secret GitHub détecté. Tentative avec les credentials Git existants.")
+    result = git_run(["git", "push", "origin", "main"], check=False)
+    if result.returncode == 0:
+        print("✅ Historique poussé avec les credentials Git existants.")
+        return True
+
+    token = getpass.getpass("GitHub PAT pour pousser vers main (entrée masquée) : ").strip()
+    if not token:
+        print("⚠️ Aucun PAT fourni ; push non effectué.")
+        return False
+    result = git_run(["git", "push", "origin", "main"], token=token, check=False)
+    if result.returncode != 0:
+        raise RuntimeError("git push a échoué après authentification PAT.")
+    print("✅ Historique poussé vers origin/main.")
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="LapisLLM Colab training orchestrator")
+    parser.add_argument("--runs", type=int, default=None, help="Number of training runs")
+    parser.add_argument("--monitor-interval", type=int, default=500)
+    parser.add_argument("--monitor-sample-tokens", type=int, default=48)
+    parser.add_argument("--monitor-prompts", default=None)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-wiki-articles", type=int, default=40)
+    parser.add_argument("--max-doc-files", type=int, default=20)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    args = parser.parse_args()
+
+    if args.runs is not None and args.runs < 1:
+        parser.error("--runs doit être >= 1")
+    if args.monitor_interval < 0:
+        parser.error("--monitor-interval doit être >= 0")
+    if args.monitor_sample_tokens < 1:
+        parser.error("--monitor-sample-tokens doit être >= 1")
 
     token = get_github_token()
     if token:
-        result = run(
-            [
-                "git",
-                "-c",
-                f"http.extraheader=AUTHORIZATION: bearer {token}",
-                "push",
-                "origin",
-                "main",
-            ],
-            check=False,
-        )
+        print("GitHub auth: secret Colab GITHUB_TOKEN détecté (valeur masquée).")
     else:
-        print("Aucun GITHUB_TOKEN/GH_TOKEN trouvé ; tentative avec les credentials Git existants.")
-        result = run(["git", "push", "origin", "main"], check=False)
-        if result.returncode != 0:
-            token = getpass.getpass(
-                "GitHub PAT pour pousser vers main (entrée masquée) : "
-            ).strip()
-            if not token:
-                raise RuntimeError("Push impossible : aucun GitHub token fourni.")
-            result = run(
-                [
-                    "git",
-                    "-c",
-                    f"http.extraheader=AUTHORIZATION: bearer {token}",
-                    "push",
-                    "origin",
-                    "main",
-                ],
-                check=False,
+        print("GitHub auth: aucun secret GITHUB_TOKEN/GH_TOKEN détecté.")
+
+    bootstrap_repo(token)
+    sync_pull(token)
+    validate_project()
+    install_project()
+    validate_tests()
+    build_corpus(args.max_wiki_articles, args.max_doc_files)
+
+    runs = args.runs if args.runs is not None else prompt_int("Combien de runs d'entraînement ?", 1, 1)
+    print(f"✅ Runs = {runs}")
+    device = detect_device() if args.device == "auto" else args.device
+    if device == "cuda":
+        import torch
+        if not torch.cuda.is_available():
+            raise RuntimeError("--device cuda demandé mais CUDA n'est pas disponible.")
+
+    summaries = []
+    for index in range(1, runs + 1):
+        summaries.append(
+            train_one_run(
+                run_number=index,
+                total_runs=runs,
+                monitor_interval=args.monitor_interval,
+                monitor_sample_tokens=args.monitor_sample_tokens,
+                prompts=args.monitor_prompts,
+                device=device,
+                seed=args.seed + index - 1,
             )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"git push a échoué avec le code {result.returncode}")
-    print("✅ Historique poussé sur origin/main.")
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Automatisation complète du training LapisLLM dans Google Colab"
-    )
-    parser.add_argument("--runs", type=int, default=None)
-    parser.add_argument("--monitor-interval", type=int, default=None)
-    parser.add_argument("--config", default="configs/tiny.yaml")
-    parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--skip-tests", action="store_true")
-    parser.add_argument("--no-push", action="store_true")
-    parser.add_argument("--max-wiki-articles", type=int, default=40)
-    parser.add_argument("--max-doc-files", type=int, default=20)
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-    try:
-        bootstrap_repo()
-        sync_pull()
-        validate_project()
-        install_project()
-        detected_device = inspect_torch()
-
-        config = REPO_ROOT / args.config
-        if not config.exists():
-            raise RuntimeError(f"Configuration absente : {config}")
-
-        if not args.skip_tests:
-            run_tests()
-
-        runs = args.runs
-        if runs is None:
-            runs = prompt_int("Combien de runs d'entraînement ?", 1, 1)
-        monitor_interval = args.monitor_interval
-        if monitor_interval is None:
-            monitor_interval = prompt_int("Learning monitor interval", 500, 0)
-
-        device = detected_device if args.device == "auto" else args.device
-        if device == "cuda" and detected_device != "cuda":
-            raise RuntimeError("CUDA demandé mais aucun GPU CUDA n'est disponible.")
-
-        target_steps = parse_max_steps(config)
-        print_banner("PARAMÈTRES")
-        print(f"Runs              : {runs}")
-        print(f"Optimizer steps   : {target_steps:,} / run")
-        print(f"Monitor interval  : {monitor_interval}")
-        print(f"Device            : {device}")
-
-        build_corpus(
-            max_wiki_articles=args.max_wiki_articles,
-            max_doc_files=args.max_doc_files,
         )
 
-        all_summaries: list[dict] = []
-        for offset in range(runs):
-            seed = args.seed + offset
-            try:
-                summary = train_one_run(
-                    run_number=offset + 1,
-                    total_runs=runs,
-                    config=config,
-                    data=DEFAULT_DATA,
-                    monitor_interval=monitor_interval,
-                    device=device,
-                    seed=seed,
-                )
-                history_dir = write_history(summary)
-                all_summaries.append(summary)
-                print_banner("✅ RUN VERIFIED")
-                print(f"steps       : {summary['recorded_step']:,}")
-                print(f"loss        : {summary['final_loss']}")
-                print(f"perplexity  : {summary['final_perplexity']}")
-                print(f"duration    : {summary['elapsed_seconds']:.1f}s")
-                print(f"history     : {history_dir.relative_to(REPO_ROOT)}")
-            except KeyboardInterrupt:
-                print("\n❌ Training interrompu.")
-                break
-            except Exception as exc:
-                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-                failed = {
-                    "run_id": f"failed-{timestamp}-{uuid.uuid4().hex[:6]}",
-                    "run_number": offset + 1,
-                    "total_runs": runs,
-                    "timestamp_utc": timestamp,
-                    "status": "failed",
-                    "error": str(exc),
-                    "device": device,
-                    "seed": seed,
-                }
-                write_history(failed)
-                print(f"\n❌ RUN {offset + 1}/{runs} échoué : {exc}")
-                if not args.no_push:
-                    push_history()
-                return 1
-
-        print_banner("PROCESSUS TERMINÉ")
-        print(f"Runs vérifiés : {len(all_summaries)}/{runs}")
-        if not args.no_push:
-            push_history()
-        return 0 if len(all_summaries) == runs else 130
-
-    except KeyboardInterrupt:
-        print("\n❌ Processus interrompu.")
-        if not args.no_push:
-            try:
-                push_history()
-            except Exception as exc:
-                print(f"⚠️ Impossible de pousser l'historique : {exc}")
-        return 130
-    except Exception as exc:
-        print(f"\n❌ ERREUR FATALE : {exc}", file=sys.stderr)
-        if not args.no_push:
-            try:
-                push_history()
-            except Exception as push_exc:
-                print(f"⚠️ Push final impossible : {push_exc}", file=sys.stderr)
-        return 1
+    print("\n" + "=" * 70)
+    print("PROCESSUS TERMINÉ")
+    print("=" * 70)
+    print(f"Runs vérifiés : {len(summaries)}/{runs}")
+    pushed = push_history(token)
+    if not pushed:
+        print("⚠️ Training terminé, mais l'historique GitHub n'a pas été poussé.")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
