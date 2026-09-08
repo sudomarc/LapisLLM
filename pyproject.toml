@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "lapis"
-version = "0.1.1"
+version = "0.2.0"
 description = "LAPIS language model and training stack from scratch"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,8 +12,6 @@ dependencies = [
     "pydantic>=2.13.5",
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
-    "pytest>=9.1.1",
-    "ruff>=0.16.6",
     "pyyaml>=6.0.0",
     "tokenizers>=0.23.2",
     "rich>=15.0.0",
@@ -30,7 +28,9 @@ data = [
 dev = [
     "coverage>=7.10.6",
     "pip-audit>=2.9.0",
+    "pytest>=9.1.1",
     "pytest-cov>=6.2.1",
+    "ruff>=0.16.6",
 ]
 
 [project.scripts]
@@ -56,4 +56,6 @@ addopts = []
 
 [tool.ruff]
 line-length = 88
+
+[tool.ruff.lint]
 select = ["F"]
