@@ -27,14 +27,16 @@ data/tokenized/
 data/manifests/
 training_data/
 
-# Checkpoints and outputs
-checkpoints/
+# Checkpoint-adjacent generated outputs
 artifacts/
 outputs/
 logs/
 runs/
 
-# Model checkpoints (large files)
+# Do not ignore Lapis model checkpoints: trained checkpoints are part of the
+# repository workflow and must be available to CHAD after synchronization.
+
+# Other large model export formats remain ignored unless explicitly published.
 *.safetensors
 *.gguf
 
