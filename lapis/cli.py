@@ -21,6 +21,12 @@ from lapis.ui.training_console import can_use_tui, run_training_console
 app = typer.Typer(
     name="lapis",
     help="LapisLLM language-model engine and developer/research platform.",
+    no_args_is_help=False,
+    rich_markup_mode="rich",
+)
+api_app = typer.Typer(
+    name="api",
+    help="Run and inspect the Lapis inference API.",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
@@ -49,7 +55,31 @@ def _training_command(config: Path, device: str | None, data: Path | None, check
     return command
 
 
+def _serve_api(checkpoint: Path, host: str, port: int, device: str) -> None:
+    _run([
+        sys.executable,
+        "-m",
+        "scripts.serve",
+        "--checkpoint",
+        str(checkpoint),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--device",
+        device,
+    ])
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(ctx: typer.Context) -> None:
+    """Show developer CLI help when no command is supplied."""
+    if ctx.invoked_subcommand is None and not ctx.resilient_parsing:
+        typer.echo(ctx.get_help())
+
+
 app.add_typer(dev_app, name="dev")
+app.add_typer(api_app, name="api")
 
 
 @app.command("train", hidden=True)
@@ -97,10 +127,32 @@ def evaluate(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--c
     _run([sys.executable, "-m", "scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device])
 
 
-@app.command("serve")
-def serve() -> None:
-    """Start the local Lapis runtime HTTP service for development/integration."""
-    _run([sys.executable, "-m", "scripts.serve"])
+@api_app.command("serve")
+def api_serve(
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port", min=1, max=65535),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    """Start the Lapis inference API server."""
+    _serve_api(checkpoint, host, port, device)
+
+
+@api_app.command("start", hidden=True)
+def api_start(
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port", min=1, max=65535),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    """Alias for ``lapis api serve``."""
+    _serve_api(checkpoint, host, port, device)
+
+
+@app.command("serve", hidden=True)
+def legacy_serve() -> None:
+    """Legacy alias for ``lapis api serve``."""
+    _serve_api(Path("checkpoints/latest.pt"), "127.0.0.1", 8000, "auto")
 
 
 @app.command("console", hidden=True)
