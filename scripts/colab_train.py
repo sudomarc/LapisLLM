@@ -26,7 +26,6 @@ METRIC_RE = _impl.METRIC_RE
 TOKEN_RE = _impl.TOKEN_RE
 format_duration = _impl.format_duration
 get_github_token = _impl.get_github_token
-main = _impl.main
 
 
 def _absolute_child_paths(command: list[str]) -> list[str]:
@@ -68,6 +67,16 @@ def train_one_run(run_number: int, total_runs: int, args, device: str, config: P
         return result
     finally:
         _impl.subprocess.Popen = _ORIGINAL_POPEN
+
+
+def main() -> int:
+    """Run Colab training non-interactively with one run by default."""
+    if len(sys.argv) == 1:
+        sys.argv.append("--runs")
+        sys.argv.append("1")
+    elif "--runs" not in sys.argv:
+        sys.argv.extend(["--runs", "1"])
+    return _impl.main()
 
 
 _impl.train_one_run = train_one_run
