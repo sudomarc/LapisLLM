@@ -13,6 +13,8 @@ Read:
 - `SECURITY.md`
 - `CONTRIBUTOR_AGREEMENT.md`
 - `TRADEMARKS.md`
+- `AGENTS.md`
+- `.agents/bootstrap.md`
 
 For accepted contributions, the project uses the ownership terms described in
 `CONTRIBUTOR_AGREEMENT.md`. This is intended to keep the official upstream
@@ -30,9 +32,13 @@ python -m pip install -U pip
 pip install -e ".[dev]"
 ```
 
-## Required checks
+## Testing policy
 
-Run the following before opening a pull request:
+Testing is a lifecycle, not a single command. The full testing policy is documented in `docs/testing.md`.
+
+Before opening a pull request, run the narrowest relevant tests first, then the affected regression suite, then the repository-wide checks required for the change.
+
+For normal Python changes:
 
 ```bash
 python -m pytest --cov=lapis --cov-report=term-missing
@@ -48,6 +54,26 @@ python -m scripts.train --config configs/tiny.yaml --epochs 1 --device cpu
 python -m scripts.evaluate --checkpoint checkpoints/latest.pt --device cpu
 ```
 
+For model, inference, runtime, configuration, packaging, security, or device-sensitive changes, run the additional validation described in `docs/testing.md`.
+
+### Regression-test rule
+
+A bug fix should normally add a regression test that would have failed before the fix.
+
+Preferred sequence:
+
+```text
+reproduce bug
+    -> write regression test
+    -> confirm failure
+    -> implement smallest fix
+    -> confirm the same test passes
+    -> run affected regression suite
+    -> run broader validation
+```
+
+Do not weaken or rewrite tests merely to make an implementation pass.
+
 ## Pull requests
 
 All changes to the official project must arrive through a pull request.
@@ -58,9 +84,35 @@ A pull request should:
 
 1. describe the reason for the change;
 2. include tests for changed behavior;
-3. update documentation/changelog when appropriate;
-4. contain no credentials or private runtime artifacts; and
-5. confirm acceptance of `CONTRIBUTOR_AGREEMENT.md` in the pull-request template.
+3. identify the targeted and broader validation that was run;
+4. document relevant risk, skipped checks, and remaining uncertainty;
+5. update documentation/changelog when appropriate;
+6. contain no credentials or private runtime artifacts; and
+7. confirm acceptance of `CONTRIBUTOR_AGREEMENT.md` in the pull-request template.
+
+### After opening the PR
+
+A PR is not ready merely because local tests pass.
+
+After CI starts, inspect the actual GitHub Actions results. Investigate failed,
+cancelled, skipped, or unexpectedly missing required checks. Distinguish
+pre-existing failures from regressions introduced by the PR.
+
+After every meaningful fix, rerun the targeted tests and the affected regression
+suite. Before merge, verify the final commit state and final CI results again.
+
+Do not rely on stale CI results from an earlier commit.
+
+### After merge
+
+Merged code remains subject to regression validation.
+
+Fast validation runs on pushes to `main`. Broader or expensive checks may run on
+a schedule, including extended model/inference tests, packaging checks,
+property-based or fuzz tests, dependency/security audits, compatibility checks,
+and benchmark/regression monitoring.
+
+A post-merge failure is a repository regression signal and must be investigated.
 
 The project owner decides whether a contribution is accepted. Opening a PR,
 being listed in commit history, or being acknowledged as a contributor does
