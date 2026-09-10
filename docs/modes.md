@@ -1,24 +1,31 @@
-# LapisLLM modes
+# LapisLLM runtime boundary
 
-LapisLLM uses one shared model/tokenizer/checkpoint core with two command surfaces.
+LapisLLM has one product role: it is the language-model engine and developer/research platform.
 
-## USER mode
+The user-facing conversational application is CHAD, a separate repository. LapisLLM exposes model and runtime capabilities; CHAD owns conversation UX, user workflows, history, accounts, settings, and presentation.
 
-The default command is:
+## Developer inference console
 
-```bash
-lapis
-```
-
-Equivalent explicit command:
+A lightweight interactive console is retained for checkpoint and generation testing:
 
 ```bash
-lapis chat
+lapis dev chat --checkpoint checkpoints/latest.pt
 ```
 
-USER mode is inference-only. It loads the configured approved/default checkpoint and exposes chat, generation settings, and a clean runtime error message. User configuration lives in `configs/user/default.yaml` and contains only inference settings.
+This console is a developer tool. It exists for:
 
-The stable Python surface is:
+- checkpoint smoke tests
+- tokenizer and prompt debugging
+- generation and sampling experiments
+- CPU/CUDA runtime testing
+- regression investigation
+- rapid local experimentation
+
+It must not acquire consumer onboarding, persistent product conversations, account management, or user-facing application settings.
+
+## Stable runtime API
+
+External applications should consume the product-agnostic inference surface:
 
 ```python
 from lapis.inference import LapisRuntime
@@ -27,26 +34,40 @@ runtime = LapisRuntime.from_checkpoint("checkpoints/latest.pt")
 response = runtime.generate("Explain DNS.")
 ```
 
-## DEV mode
+The runtime owns checkpoint loading, tokenizer/model compatibility, device selection, generation, and sampling. It does not know about CHAD-specific product behavior.
 
-Developer tooling is explicitly namespaced:
+## Developer CLI
+
+Developer operations are explicitly namespaced:
 
 ```bash
 lapis dev --help
 lapis dev train --config configs/tiny.yaml
 lapis dev evaluate --checkpoint checkpoints/latest.pt
 lapis dev generate "A language model learns by"
+lapis dev chat --checkpoint checkpoints/latest.pt
 lapis dev inspect --checkpoint checkpoints/latest.pt
 lapis dev benchmark --checkpoint checkpoints/latest.pt
 lapis dev checkpoint inspect --checkpoint checkpoints/latest.pt
 ```
 
-DEV mode owns training, evaluation, benchmarking, checkpoint inspection, datasets and the detailed training console. Existing lower-level scripts remain available for compatibility.
+Legacy top-level training, evaluation, and generation commands may remain temporarily for compatibility. New integrations and documentation should prefer `lapis dev ...` or the stable Python runtime API.
 
-## Separation rules
+## Boundary rule
 
-- USER runtime does not import or expose optimizer/training APIs.
-- USER checkpoint loading is read-only and uses PyTorch `weights_only=True`.
-- DEV commands explicitly invoke training/evaluation utilities.
-- Detailed startup diagnostics are emitted only when `LAPIS_DEV=1`; normal USER errors remain concise.
-- The existing top-level `train`, `evaluate`, `generate`, and script entry points remain available as compatibility paths. New documentation should use `lapis dev ...` for developer operations.
+```text
+LAPISLLM
+  model + tokenizer + data + training + evaluation
+  + checkpoints + inference + generation + developer tools
+                         │
+                         ▼
+                product-agnostic runtime
+                         │
+                         ▼
+                       CHAD
+                         │
+                         ▼
+                       USERS
+```
+
+No first-class consumer mode exists in LapisLLM.
