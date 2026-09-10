@@ -2,9 +2,9 @@
 
 # L A P I S L L M
 
-**An inspectable, from-scratch language model and training stack in Python/PyTorch.**
+**An inspectable, from-scratch decoder-only language model and ML/runtime engineering platform built with Python and PyTorch.**
 
-Build the tokenizer. Build the Transformer. Train it. Evaluate it. Inspect what it learns.
+Build the tokenizer. Build the Transformer. Train it. Evaluate it. Inspect every layer of the stack.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main&label=tests)](https://github.com/sudomarc/LapisLLM/actions/workflows/tests.yml)
 [![Website](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/static.yml?branch=main&label=website)](https://github.com/sudomarc/LapisLLM/actions/workflows/static.yml)
@@ -12,32 +12,61 @@ Build the tokenizer. Build the Transformer. Train it. Evaluate it. Inspect what 
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.14%2B-EE4C2C)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-000000)](LICENSE)
 
-[**Website**](https://sudomarc.github.io/LapisLLM/) · [**Documentation**](docs/) · [**Testing**](docs/testing.md) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](https://sudomarc.github.io/LapisLLM/roadmap/)
+[**Website**](https://sudomarc.github.io/LapisLLM/) · [**Documentation**](docs/) · [**Testing**](docs/testing.md) · [**Contributing**](CONTRIBUTING.md) · [**Security**](SECURITY.md) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](https://sudomarc.github.io/LapisLLM/roadmap/)
 
 </div>
 
 > [!IMPORTANT]
-> **Project status — Lapis 0.2.0.** Lapis is an experimental research and learning project. It is designed for transparency, reproducibility, and engineering practice; it is **not** presented as a competitive pretrained foundation model. Capability and benchmark claims are intentionally withheld until reproducible evaluation exists.
+> **Current release: Lapis 0.2.0.** Lapis is an experimental research and learning project. It is designed to make model engineering, training behavior, runtime boundaries, and validation inspectable and reproducible. It is **not** currently presented as a competitive pretrained foundation model, and this repository does not claim benchmark performance or general-purpose capability without reproducible evidence.
 
-## Overview
+## What Lapis is
 
-LapisLLM is a compact decoder-only Transformer stack built from first principles in Python and PyTorch.
+LapisLLM is the **engine** behind a language-model system, not the consumer application around it.
 
-The repository owns the model engine and developer/research stack:
+The repository owns the model and ML/runtime engineering layers:
 
-- byte-level BPE tokenization;
-- causal self-attention with grouped-query attention (GQA);
+- decoder-only Transformer architecture;
+- ByteLevel BPE tokenization;
+- causal attention with grouped-query attention (GQA);
 - Rotary Position Embeddings (RoPE);
-- RMSNorm;
-- SwiGLU feed-forward blocks;
-- optimizer and scheduler construction;
-- checkpointing and RNG state preservation;
-- evaluation and generation;
-- developer CLI and inference tooling;
-- experiment history and learning observability;
-- testing, packaging, and reproducibility infrastructure.
+- RMSNorm and SwiGLU blocks;
+- training, optimization, gradient accumulation, clipping, warmup, and cosine decay;
+- checkpointing and reproducibility state;
+- evaluation and autoregressive generation;
+- a stable, product-agnostic inference runtime;
+- developer/research CLI and experiment tooling;
+- testing, packaging, security, and CI infrastructure.
 
-LapisLLM is the engine, not the consumer chatbot. The user-facing conversational product is **CHAD**, a separate repository that consumes Lapis through its product-agnostic runtime boundary.
+The user-facing conversational product is **CHAD**, a separate repository. CHAD owns chat UX, conversations, history, accounts, user settings, and other consumer workflows. Lapis provides the model/runtime layer that an external application can consume.
+
+```text
+                         LapisLLM
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+     Training            Runtime          Developer CLI
+        │                   │                   │
+        └───────────────────┼───────────────────┘
+                            │
+                    public runtime API
+                            │
+                            ▼
+                           CHAD
+                            │
+                          users
+```
+
+### What Lapis is not
+
+LapisLLM deliberately does **not** provide a first-class consumer/user mode. It must not grow accounts, consumer onboarding, conversation persistence, profile/settings systems, or a top-level consumer chatbot. The interactive terminal console exists for developer and research validation only.
+
+## Why this project exists
+
+Lapis is built around a simple engineering principle: **understand the system before scaling the system**.
+
+A useful LLM project needs more than a Transformer implementation. It needs reliable configuration, tokenizer/model compatibility, deterministic experiments, checkpoint validation, generation safeguards, tests that catch regressions, reproducible data provenance, and a clean interface between the model engine and applications.
+
+The repository therefore treats correctness and observability as first-class engineering features rather than polish added after training.
 
 ## Architecture
 
@@ -48,59 +77,65 @@ Text
 ByteLevel BPE tokenizer
   │
   ▼
+Token IDs
+  │
+  ▼
 Token embeddings
   │
   ▼
-┌────────────────────────────────────────────┐
-│ Transformer block × N                      │
-│                                            │
-│  RMSNorm → GQA causal attention + RoPE     │
-│        ↓                                   │
-│  residual                                  │
-│        ↓                                   │
-│  RMSNorm → SwiGLU MLP                      │
-│        ↓                                   │
-│  residual                                  │
-└────────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│ Transformer block × N                       │
+│                                             │
+│  RMSNorm → GQA causal self-attention        │
+│           + RoPE                            │
+│             ↓                               │
+│        residual connection                  │
+│             ↓                               │
+│  RMSNorm → SwiGLU feed-forward              │
+│             ↓                               │
+│        residual connection                  │
+└─────────────────────────────────────────────┘
   │
   ▼
-RMSNorm
+Final RMSNorm
   │
   ▼
 Language-model head
   │
   ▼
-Next-token probabilities
+Next-token logits / probabilities
 ```
 
-### Tokenizer
+### Tokenization
 
-Lapis uses a Hugging Face `tokenizers` BPE backend with ByteLevel pre-tokenization and NFKC normalization. The tokenizer is versioned and stored alongside checkpoints so inference can verify vocabulary and tokenizer compatibility.
+The tokenizer uses the Hugging Face `tokenizers` library with a ByteLevel BPE backend and NFKC normalization. Tokenizer compatibility is checked at inference time against checkpoint metadata and vocabulary size.
 
-### Attention
+### Transformer core
 
-The attention implementation is causal and supports grouped-query attention by projecting fewer key/value heads and repeating them across query groups. Rotary frequencies are stored separately from model parameters and are kept in `complex64` during model dtype conversion.
+The current Tiny development configuration uses 6 layers, hidden size 256, 8 query heads, 4 key/value heads, and a 512-token context window. The model uses causal attention, RoPE, RMSNorm, and SwiGLU.
 
-### Objective
+### Training objective
 
-Training uses next-token prediction with cross-entropy loss and supports gradient accumulation, gradient clipping, linear warmup, and cosine decay.
+Training uses next-token prediction with cross-entropy loss. The training stack includes gradient accumulation, gradient clipping, linear warmup, and cosine learning-rate decay.
 
-## Models
+## Current model
 
-Lapis currently uses a small development configuration while the training and evaluation stack is being hardened.
+The repository currently has one named development configuration. Larger sizes are roadmap targets, not released model claims.
 
-| Model | Status | Hidden size | Layers | Attention | Context |
-|---|---|---:|---:|---:|---:|
-| **Lapis Tiny** | Experimental | 256 | 6 | 8 heads / 4 KV heads | 512 |
-| Lapis 1B | Roadmap | — | — | — | — |
-| Lapis 3B | Roadmap | — | — | — | — |
-| Lapis 7B | Roadmap | — | — | — | — |
+| Configuration | Status | Hidden | Layers | Q heads | KV heads | Context |
+|---|---|---:|---:|---:|---:|---:|
+| **Lapis Tiny** | Experimental | 256 | 6 | 8 | 4 | 512 |
+| Lapis 1B | Roadmap | — | — | — | — | — |
+| Lapis 3B | Roadmap | — | — | — | — | — |
+| Lapis 7B | Roadmap | — | — | — | — | — |
 
-The current development configuration is [`configs/tiny.yaml`](configs/tiny.yaml). Exact instantiated parameter counts are reported by the training code rather than hard-coded here.
+Canonical configuration: [`configs/tiny.yaml`](configs/tiny.yaml).
+
+The current Tiny configuration defines a 4,096-token vocabulary and is intended for engineering validation, small experiments, and development—not as evidence of production-scale model capability.
 
 ## Quickstart
 
-### Install
+### 1. Install Lapis
 
 ```bash
 git clone https://github.com/sudomarc/LapisLLM.git
@@ -111,16 +146,66 @@ python -m pip install -U pip
 pip install -e ".[dev]"
 ```
 
-### Developer CLI
+For corpus generation, install the optional data dependencies too:
 
-The top-level `lapis` command is the developer/research CLI. LapisLLM does not provide a first-class consumer/user mode; consumer conversation UX belongs to CHAD.
+```bash
+pip install -e ".[data,dev]"
+```
+
+### 2. Inspect the developer CLI
 
 ```bash
 lapis --help
 lapis dev --help
 ```
 
-Typical workflows:
+The explicit `lapis dev ...` namespace is the preferred interface for development and research workflows.
+
+### 3. Train
+
+For the normal Tiny development path, first build a bounded open corpus and then train against the generated combined file:
+
+```bash
+python scripts/fetch_open_corpus.py --max-chars 50000000
+python scripts/train.py \
+  --config configs/tiny.yaml \
+  --device cuda \
+  --data training_data/open/combined.txt
+```
+
+The collector is intentionally bounded. It streams public/open datasets, cleans text, records per-source provenance, and writes `training_data/open/manifest.json` alongside source files. Generated corpora are experiment inputs and are not committed to Git by default.
+
+### 4. Fast CPU iteration
+
+For a small local or CI-style iteration:
+
+```bash
+python scripts/train.py \
+  --config configs/cpu-fast.yaml \
+  --device cpu \
+  --epochs 1
+```
+
+The CPU-fast profile is an intentionally different development architecture. Its checkpoints are not interchangeable with normal Tiny checkpoints.
+
+## Developer CLI
+
+The top-level CLI is intentionally developer/research oriented.
+
+```text
+lapis
+└── dev
+    ├── train
+    ├── evaluate
+    ├── generate
+    ├── chat
+    ├── inspect
+    ├── benchmark
+    ├── checkpoint inspect
+    └── publish
+```
+
+Common commands:
 
 ```bash
 lapis dev train
@@ -131,47 +216,40 @@ lapis dev benchmark --checkpoint checkpoints/latest.pt
 lapis dev checkpoint inspect --checkpoint checkpoints/latest.pt
 ```
 
-The explicit `lapis dev ...` namespace is intentional. Existing lower-level scripts and legacy commands may remain for compatibility, but new documentation and integrations should use the developer namespace.
+A lower-level script interface remains available for direct control and compatibility. New integrations and documentation should prefer `lapis dev ...` unless a lower-level script is specifically useful.
 
 ## Runtime API
 
-External applications such as CHAD should depend on the stable runtime surface rather than deep implementation modules.
+Applications such as CHAD should use the stable public runtime instead of importing internal model modules.
 
 ```python
-from lapis.inference import LapisRuntime
+from lapis.inference import LapisRuntime, SamplingConfig
 
 runtime = LapisRuntime.from_checkpoint("checkpoints/latest.pt")
-response = runtime.generate("Explain DNS.")
+
+response = runtime.generate(
+    "Explain DNS.",
+    sampling=SamplingConfig(
+        max_new_tokens=128,
+        temperature=0.8,
+        top_k=40,
+        top_p=0.95,
+    ),
+)
 ```
 
-The runtime boundary is product-agnostic and centers on model loading, tokenization, generation, streaming where supported, and model information. Runtime code must not import CHAD-specific concepts.
+The runtime surface currently exposes:
 
-## Training
+- checkpoint-backed model loading;
+- tokenizer/model compatibility checks;
+- tokenization;
+- text generation;
+- streaming generation;
+- model metadata such as context length, vocabulary size, parameter count, device, and tokenizer version.
 
-For direct control, the lower-level trainer remains available. The data path below assumes you have already generated the mixed corpus; a fresh checkout does not include that generated file.
+Inference loading uses PyTorch's restricted `weights_only=True` mode. Runtime generation validates sampling parameters and rejects non-finite logits or probabilities rather than silently continuing with corrupted numerical state.
 
-```bash
-python scripts/fetch_open_corpus.py --max-chars 50000000
-python scripts/train.py \
-  --config configs/tiny.yaml \
-  --device cuda \
-  --data training_data/open/combined.txt
-```
-
-### CPU-fast profile
-
-For a quick CPU iteration:
-
-```bash
-python scripts/train.py \
-  --config configs/cpu-fast.yaml \
-  --device cpu \
-  --epochs 1
-```
-
-The CPU-fast profile intentionally changes the model architecture and therefore cannot be resumed into a normal Tiny checkpoint.
-
-## Evaluation and generation
+## Generation and evaluation
 
 Lapis follows an evidence-gated development sequence:
 
@@ -187,7 +265,7 @@ Generation regression
 Scaling
 ```
 
-Generate from a checkpoint:
+Generate from a checkpoint with the lower-level generator:
 
 ```bash
 python scripts/generate.py \
@@ -199,57 +277,88 @@ python scripts/generate.py \
   --top-p 0.95
 ```
 
-The evaluation and inference stacks verify checkpoint/tokenizer compatibility before loading model state. Sampling validates temperature, top-k, top-p, and resulting probability tensors before drawing the next token.
+Generation is an engine capability. It is not a consumer chat feature. The runtime handles EOS termination, context limits, empty prompts, long prompts, sampling validation, deterministic configuration where supported, device/dtype handling, and checkpoint-backed generation.
 
 ## Developer inference console
 
-An interactive terminal console is allowed only as developer/research tooling:
+For interactive debugging:
 
 ```bash
 lapis dev chat --checkpoint checkpoints/latest.pt
 ```
 
-Its purpose is checkpoint smoke testing, prompt/tokenizer debugging, generation experiments, regression investigation, and rapid local experimentation. It is not a user product and must not acquire consumer-account, onboarding, or consumer conversation persistence responsibilities.
+This console exists for checkpoint smoke tests, tokenizer/prompt debugging, sampling experiments, CPU/CUDA verification, regression investigation, and rapid local experimentation.
+
+It is intentionally **not** a user product and must not acquire accounts, onboarding, consumer persistence, profiles, or other application-layer responsibilities.
+
+## Training data
+
+The repository includes a bounded streaming collector for a mixed open/public corpus. The current source registry includes:
+
+| Domain | Current sources |
+|---|---|
+| General web | FineWeb, C4 |
+| Educational web | FineWeb-Edu, Cosmopedia |
+| Knowledge | Wikipedia |
+| Research | S2ORC arXiv |
+| Books | Project Gutenberg filtered corpus |
+| Mathematics | Open Web Math, OpenR1 Math |
+| Conversational | OpenAssistant |
+| Code | The Stack Smol |
+
+The collector normalizes and cleans text, enforces global and per-source budgets, skips unusable samples, and records dataset/config/split/field statistics in a machine-readable manifest.
+
+These public/open sources are **Lapis's engineering inputs**; their inclusion does not imply that they are used to train Claude, GPT, or any other proprietary model. Anthropic's private training corpus is not publicly disclosed by Anthropic.
+
+Because dataset licenses and terms vary, preserve upstream provenance and review the applicable license before redistributing generated corpora or model weights.
+
+## Checkpoints and reproducibility
+
+Checkpoint integrity is part of model correctness.
+
+A valid development run should be tied to the configuration, tokenizer, data provenance, and random state needed to understand or reproduce the result. Training infrastructure tracks optimizer/scheduler and RNG state for checkpointing, while inference additionally verifies tokenizer compatibility before constructing the model.
+
+For inference, the expected layout is a checkpoint together with its matching tokenizer directory:
+
+```text
+checkpoints/
+└── latest.pt
+    └── ../tokenizer/
+```
+
+Do not treat a checkpoint as trusted executable input. Use the safe inference loading path for untrusted model artifacts; training-resume paths with broader serialization requirements must only consume trusted checkpoints.
 
 ## Learning Monitor
 
-The Learning Monitor helps answer:
+The Learning Monitor makes training behavior visible while weights are changing. Depending on configuration, it records signals such as:
 
-> **What is the model learning while the optimizer is changing the weights?**
+- training loss;
+- perplexity;
+- learning rate;
+- tokens seen;
+- generated samples from fixed prompts.
 
-At configured intervals it records training loss, perplexity, learning rate, tokens seen, and generated samples from fixed prompts.
+This supports regression investigation and experiment comparison without turning the repository into a consumer analytics platform.
 
-## Open training corpus
+## Testing and quality gates
 
-Lapis can build a bounded mixed-domain corpus from public/open datasets with streaming ingestion:
-
-```bash
-python scripts/fetch_open_corpus.py --max-chars 50000000
-```
-
-The collector records provenance and source-level statistics in `training_data/open/manifest.json`.
-
-Generated multi-megabyte corpora are experiment inputs, not source code, and are not kept in Git by default.
-
-## Testing
-
-Testing is a lifecycle that covers local development, pull requests, merge, and post-merge maintenance.
-
-Use the smallest useful validation first, then widen scope according to risk:
+Testing is a lifecycle, not a single green badge.
 
 ```text
-single regression test
-        ↓
-targeted test module
-        ↓
+change
+  ↓
+smallest relevant test
+  ↓
 affected regression suite
-        ↓
-repository test suite
-        ↓
-CI matrix / specialized checks
+  ↓
+repository-wide tests
+  ↓
+CI matrix and specialized checks
+  ↓
+final commit verification
 ```
 
-### Normal validation
+Normal local validation:
 
 ```bash
 python -m pytest --cov=lapis --cov-report=term-missing
@@ -257,61 +366,58 @@ ruff check .
 python -m pip_audit
 ```
 
-### Bug-fix rule
+For training changes, also run a Tiny CPU smoke test and evaluate the resulting checkpoint:
 
-A bug fix should normally add a regression test that fails before the fix and passes after it:
-
-```text
-reproduce → regression test → confirm failure → fix → confirm pass → regression suite → broader validation
+```bash
+python -m scripts.train --config configs/tiny.yaml --epochs 1 --device cpu
+python -m scripts.evaluate --checkpoint checkpoints/latest.pt --device cpu
 ```
 
-Never weaken, delete, or rewrite a test solely to make an implementation or CI pass.
-
-### Risk-based validation
-
-Model and training changes should consider tensor shapes, devices, dtypes, masking, RoPE, vocabulary compatibility, numerical stability, gradients, RNG/reproducibility, checkpoints, and CPU/CUDA behavior.
-
-Inference and generation changes should consider empty prompts, long prompts, context limits, EOS/stop behavior, token limits, sampling controls, deterministic seeds, invalid parameters, and checkpoint-backed inference.
-
-Configuration changes should cover valid and invalid boundaries, including zero, negative, minimum/maximum values, missing paths, impossible combinations, `NaN`, `+Inf`, and `-Inf` where relevant.
-
-Packaging/API changes should cover build/install behavior, public imports, request validation, dispatch, errors, streaming, and external runtime compatibility where applicable.
-
-Read the full policy in [`docs/testing.md`](docs/testing.md).
-
-## Pull requests and CI
-
-Every meaningful change should have a validation plan before the PR is opened.
-
-After a PR is opened, GitHub Actions becomes the authoritative automated validation layer:
+Bug fixes should normally follow:
 
 ```text
-CI starts
-   ↓
-inspect required checks
-   ↓
-investigate failures
-   ↓
-fix failures caused by the PR
-   ↓
-rerun targeted + affected regression tests
-   ↓
-confirm final CI state
+reproduce → regression test → confirm failure → smallest fix → confirm pass → broader validation
 ```
 
-If the PR changes after a successful run, the final commit requires fresh validation. Do not rely on stale checks.
+Important risk areas include tensor shapes, broadcasting, devices, dtypes, masking and causality, RoPE, tokenizer/model vocabulary compatibility, NaN/Inf propagation, gradients, RNG state, context limits, EOS behavior, sampling parameters, checkpoint compatibility, packaging, and CPU/CUDA behavior.
 
-Before merge, review the final diff, identify the final commit, confirm required checks are green, and ensure no unintended artifacts or secrets are included.
+See [`docs/testing.md`](docs/testing.md) for the detailed repository policy.
 
-After merge, the main branch remains subject to regression validation. The repository's current required post-merge validation is driven by push/workflow-dispatch CI; broader or more expensive checks may be added as dedicated scheduled workflows when their cost justifies continuous scheduling.
+## CI, pull requests, and releases
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) for the repository workflow.
+The repository uses GitHub Actions as the automated validation layer for pull requests and the main branch. CI covers multiple Python versions, the test suite, coverage, Tiny CPU training/evaluation, linting, packaging/wheel installation, and security-oriented checks.
+
+The intended workflow is:
+
+```text
+inspect repository state
+        ↓
+make focused change
+        ↓
+run targeted validation
+        ↓
+open PR
+        ↓
+CI + review
+        ↓
+fix failures / regressions
+        ↓
+re-run affected checks
+        ↓
+merge
+        ↓
+post-merge regression monitoring
+```
+
+A successful earlier commit does not validate a later changed commit. Final validation must correspond to the final code state.
+
+Before contributing, read [`AGENTS.md`](AGENTS.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/testing.md`](docs/testing.md), and [`SECURITY.md`](SECURITY.md).
 
 ## Colab
 
-Google Colab is a supported development environment.
+Google Colab is a supported development environment for model experiments.
 
-From a fresh checkout:
+A basic setup is:
 
 ```bash
 %cd /content/LapisLLM
@@ -319,13 +425,26 @@ From a fresh checkout:
 !pip install -e ".[dev]"
 ```
 
-Then use the developer namespace:
+Use the same developer interfaces as local development:
 
 ```bash
 !lapis dev train
 ```
 
-Colab training is development infrastructure, not a substitute for the repository CI contract. Generated checkpoints and large corpora remain local by default; lightweight experiment history may be tracked when explicitly required.
+Colab is development infrastructure, not a replacement for the repository CI contract. Large generated corpora and checkpoints remain local unless explicitly needed for an experiment or release workflow.
+
+## Documentation map
+
+| Resource | Purpose |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | Engineering contract, architecture boundaries, safety rules, and agent workflow |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contribution, testing, PR, and ownership workflow |
+| [`docs/testing.md`](docs/testing.md) | Detailed validation lifecycle and risk-based testing policy |
+| [`SECURITY.md`](SECURITY.md) | Vulnerability reporting and checkpoint/secret handling |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history and known project evolution |
+| [`configs/`](configs/) | Model, runtime, and experiment configurations |
+| [`tests/`](tests/) | Correctness and regression coverage |
+| [`website/`](website/) | Developer-facing project site |
 
 ## Repository layout
 
@@ -333,48 +452,61 @@ Colab training is development infrastructure, not a substitute for the repositor
 LapisLLM/
 ├── lapis/
 │   ├── config/            # configuration models and validation
-│   ├── data/              # data loading and preparation
+│   ├── data/              # dataset/data preparation pipeline
 │   ├── dev/               # explicit developer CLI namespace
-│   ├── inference/         # shared checkpoint-backed runtime
-│   ├── model/             # Transformer, attention, RoPE, MLP, normalization
-│   ├── tokenizer/         # BPE tokenizer
-│   └── training/          # training, checkpoints, optimization, monitoring
-├── scripts/               # executable training/evaluation workflows
-├── configs/               # YAML experiment configurations
+│   ├── inference/         # checkpoint-backed public runtime
+│   ├── model/              # decoder-only Transformer implementation
+│   ├── tokenizer/          # tokenizer implementation/training
+│   ├── training/          # training, checkpoints, optimization, monitoring
+│   ├── ui/                # developer training-console components
+│   ├── cli.py             # top-level CLI entry point
+│   └── logging.py         # logging helpers
+├── scripts/               # executable workflows and compatibility entry points
+├── configs/               # YAML model/training/runtime configuration
 ├── tests/                 # correctness and regression tests
-├── docs/                  # technical documentation and testing policy
+├── docs/                  # technical documentation
 ├── website/               # GitHub Pages developer site
 ├── training_history/      # lightweight verified experiment records
 ├── .agents/               # agent operating system and skills
 ├── AGENTS.md              # repository engineering contract
-├── CONTRIBUTING.md        # contribution and PR workflow
-├── CHANGELOG.md
-├── LICENSE
+├── CONTRIBUTING.md        # contribution workflow
+├── SECURITY.md            # security policy
+├── CHANGELOG.md           # release history
+├── LICENSE                # MIT license
 └── README.md
 ```
 
 ## Reliability and security
 
-Lapis treats checkpoint and experiment integrity as part of model correctness.
+Lapis treats source code, configuration, checkpoints, datasets, logs, model outputs, issue/PR text, and external documents as data that must be validated according to context.
 
-The repository also treats issue text, PR comments, logs, model outputs, datasets, retrieved documents, and external web content as untrusted data. Agents and workflows must independently validate such evidence before acting on it.
+The project explicitly rejects:
 
-Never commit credentials, API keys, private model material, or machine-local artifacts. Never weaken safeguards to make CI green. Prefer safe, read-only checkpoint loading paths for inference.
+- committing credentials or private keys;
+- unsafe model deserialization when a safe compatible path exists;
+- arbitrary code execution through configuration;
+- silently accepting invalid numerical parameters;
+- weakening tests or security controls just to make CI green;
+- unsupported claims about benchmark quality or model capability.
+
+See [`SECURITY.md`](SECURITY.md) for the reporting policy and checkpoint guidance.
 
 ## Current limitations
 
-Lapis is intentionally incomplete. Known engineering gaps include:
+Lapis is intentionally incomplete. The current engineering gaps include:
 
-- distributed training;
-- production-scale data sharding and deduplication;
-- high-performance KV-cache inference;
-- broad benchmark suites;
-- a complete mixed-precision optimization strategy;
-- exact mid-epoch dataloader replay;
+- exact mid-epoch dataloader/sampler replay;
+- stronger training-resume semantics;
+- mixed-precision training;
+- distributed and multi-GPU training;
+- production-scale data sharding, deduplication, and processing;
+- efficient KV-cache generation;
+- broad benchmark coverage;
+- performance regression tracking;
 - production serving hardening;
 - large-scale model releases.
 
-These are roadmap items, not hidden assumptions.
+These are explicit roadmap items, not hidden claims of maturity.
 
 ## Roadmap
 
@@ -389,23 +521,35 @@ These are roadmap items, not hidden assumptions.
 - [x] Checkpoint save/load
 - [x] Generation
 
-### Training reliability
+### Reliability
 
-- [x] CPU-fast profile
+- [x] Configuration validation
+- [x] CPU-fast development profile
 - [x] Learning Monitor
 - [x] Experiment history
 - [x] Checkpoint validation gates
 - [x] Colab workflow
 - [ ] Exact mid-epoch replay
-- [ ] Stronger training resume semantics
+- [ ] Stronger resume semantics
 
-### Scale and evaluation
+### Inference and scale
 
+- [ ] Efficient KV-cache generation
+- [ ] Mixed-precision optimization
 - [ ] Distributed / multi-GPU training
-- [ ] Expanded benchmark suite
-- [ ] Extended generation regressions
-- [ ] Performance regression tracking
 - [ ] Larger model configurations
+- [ ] Broader benchmark suite
+- [ ] Performance regression tracking
+- [ ] Production serving hardening
+
+### Post-training and export
+
+- [ ] Instruction tuning
+- [ ] Preference optimization
+- [ ] Expanded safety/evaluation workflows
+- [ ] Safetensors/export pipeline
+- [ ] Quantization architecture
+- [ ] GGUF/Ollama-compatible packaging where supported
 
 ## License
 
