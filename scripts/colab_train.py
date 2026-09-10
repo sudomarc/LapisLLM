@@ -14,12 +14,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import _colab_train_impl as _impl
-from scripts._colab_train_impl import main
 
 _ORIGINAL_TRAIN_ONE_RUN = _impl.train_one_run
 _ORIGINAL_POPEN = subprocess.Popen
 _PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
 HISTORY = _impl.HISTORY
+# Preserve the public API used by the legacy ``colab_run`` entry point without
+# reintroducing the wildcard import that previously hid unused/repeated names.
+get_github_token = _impl.get_github_token
+main = _impl.main
 
 
 def _absolute_child_paths(command: list[str]) -> list[str]:
