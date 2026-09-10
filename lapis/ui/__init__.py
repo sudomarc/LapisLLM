@@ -1,4 +1,4 @@
-"""Terminal user interfaces for Lapis."""
+"""Developer and research terminal interfaces for LapisLLM."""
 
 from .training_console import run_training_console
 

@@ -1,8 +1,4 @@
-"""Developer command namespace.
-
-All commands here are explicitly opt-in through ``lapis dev``. Legacy top-level
-commands remain available for compatibility but are not the default UX.
-"""
+"""Developer command namespace for LapisLLM."""
 
 from __future__ import annotations
 
@@ -19,7 +15,7 @@ from rich.table import Table
 
 from lapis.inference.runtime import LapisRuntime, SamplingConfig
 
-app = typer.Typer(name="dev", help="Developer commands.")
+app = typer.Typer(name="dev", help="Developer and research commands.")
 console = Console()
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,11 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _run(module: str, *args: str) -> None:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    result = subprocess.run(
-        [sys.executable, "-u", "-m", module, *args],
-        cwd=REPO_ROOT,
-        env=env,
-    )
+    result = subprocess.run([sys.executable, "-u", "-m", module, *args], cwd=REPO_ROOT, env=env)
     raise typer.Exit(result.returncode)
 
 
@@ -48,13 +40,7 @@ def train(
     monitor_log: Path | None = typer.Option(None, "--monitor-log"),
     resume: Path | None = typer.Option(None, "--resume"),
 ) -> None:
-    args = [
-        "--config", str(config),
-        "--epochs", str(epochs),
-        "--checkpoint", str(checkpoint),
-        "--monitor-interval", str(monitor_interval),
-        "--monitor-sample-tokens", str(monitor_sample_tokens),
-    ]
+    args = ["--config", str(config), "--epochs", str(epochs), "--checkpoint", str(checkpoint), "--monitor-interval", str(monitor_interval), "--monitor-sample-tokens", str(monitor_sample_tokens)]
     if device:
         args += ["--device", device]
     if data:
@@ -69,10 +55,7 @@ def train(
 
 
 @app.command("evaluate")
-def evaluate(
-    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
-    device: str = typer.Option("auto", "--device"),
-) -> None:
+def evaluate(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), device: str = typer.Option("auto", "--device")) -> None:
     _run("scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device)
 
 
@@ -86,16 +69,24 @@ def generate(
     top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
     device: str = typer.Option("auto", "--device"),
 ) -> None:
-    _run(
-        "scripts.generate",
-        "--checkpoint", str(checkpoint),
-        "--prompt", prompt,
-        "--max-new-tokens", str(max_new_tokens),
-        "--temperature", str(temperature),
-        "--top-k", str(top_k),
-        "--top-p", str(top_p),
-        "--device", device,
-    )
+    _run("scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device)
+
+
+@app.command("chat")
+def chat(
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    device: str = typer.Option("auto", "--device"),
+    max_new_tokens: int = typer.Option(128, "--max-new-tokens", min=1),
+    temperature: float = typer.Option(0.8, "--temperature", min=0.01),
+    top_k: int = typer.Option(40, "--top-k", min=0),
+    top_p: float = typer.Option(0.95, "--top-p", min=0.01),
+    no_color: bool = typer.Option(False, "--no-color"),
+) -> None:
+    """Start the developer inference/testing console."""
+    args = ["--checkpoint", str(checkpoint), "--device", device, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p)]
+    if no_color:
+        args.append("--no-color")
+    _run("scripts.chat", *args)
 
 
 @app.command("inspect")
@@ -112,14 +103,7 @@ def inspect(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--ch
     table = Table(title=f"Checkpoint: {checkpoint}")
     table.add_column("Field")
     table.add_column("Value")
-    for key, value in (
-        ("step", data.get("step", "—")),
-        ("epoch", data.get("epoch", "—")),
-        ("tokenizer_version", data.get("tokenizer_version", "—")),
-        ("vocab_size", model.get("vocab_size", "—")),
-        ("layers", model.get("num_layers", "—")),
-        ("hidden_size", model.get("hidden_size", "—")),
-    ):
+    for key, value in (("step", data.get("step", "—")), ("epoch", data.get("epoch", "—")), ("tokenizer_version", data.get("tokenizer_version", "—")), ("vocab_size", model.get("vocab_size", "—")), ("layers", model.get("num_layers", "—")), ("hidden_size", model.get("hidden_size", "—"))):
         table.add_row(key, str(value))
     console.print(table)
 

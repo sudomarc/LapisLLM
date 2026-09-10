@@ -1,14 +1,11 @@
-"""Checkpoint-backed inference runtime.
-
-This module intentionally contains inference-only primitives. Training, optimizer,
-dataset, and checkpoint-writing operations are not exposed by this API.
-"""
+"""Product-agnostic checkpoint-backed inference runtime."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import torch
 
@@ -30,18 +27,34 @@ class SamplingConfig:
     top_p: float = 0.95
 
     def validate(self) -> None:
+        if not isinstance(self.max_new_tokens, int) or isinstance(self.max_new_tokens, bool):
+            raise ValueError("max_new_tokens must be an integer")
         if self.max_new_tokens < 1:
             raise ValueError("max_new_tokens must be at least 1")
-        if self.temperature <= 0:
-            raise ValueError("temperature must be greater than 0")
+        if (
+            not isinstance(self.temperature, (int, float))
+            or isinstance(self.temperature, bool)
+            or not math.isfinite(self.temperature)
+            or self.temperature <= 0
+        ):
+            raise ValueError("temperature must be finite and greater than 0")
+        if not isinstance(self.top_k, int) or isinstance(self.top_k, bool):
+            raise ValueError("top_k must be an integer")
         if self.top_k < 0:
             raise ValueError("top_k must be >= 0")
-        if not 0 < self.top_p <= 1:
-            raise ValueError("top_p must be in the range (0, 1]")
+        if (
+            not isinstance(self.top_p, (int, float))
+            or isinstance(self.top_p, bool)
+            or not math.isfinite(self.top_p)
+            or not 0 < self.top_p <= 1
+        ):
+            raise ValueError("top_p must be finite and in the range (0, 1]")
 
 
 def _sample_next_token(logits: torch.Tensor, config: SamplingConfig) -> torch.Tensor:
     config.validate()
+    if not torch.isfinite(logits).all():
+        raise RuntimeError("Model produced non-finite logits")
     logits = logits / config.temperature
 
     if config.top_k > 0:
@@ -52,6 +65,8 @@ def _sample_next_token(logits: torch.Tensor, config: SamplingConfig) -> torch.Te
     if config.top_p < 1.0:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
         probabilities = torch.softmax(sorted_logits, dim=-1)
+        if not torch.isfinite(probabilities).all():
+            raise RuntimeError("Sampling produced non-finite probabilities")
         cumulative = torch.cumsum(probabilities, dim=-1)
         remove = cumulative - probabilities > config.top_p
         sorted_logits = sorted_logits.masked_fill(remove, float("-inf"))
@@ -77,7 +92,7 @@ def _validate_checkpoint_tokenizer(checkpoint: dict[str, Any], tokenizer: Tokeni
 
 
 class LapisRuntime:
-    """Inference-only runtime backed by an approved/read-only checkpoint."""
+    """Inference-only runtime backed by a read-only model checkpoint."""
 
     def __init__(self, model: LapisModel, tokenizer: Tokenizer, device: torch.device, checkpoint: Path) -> None:
         self.model = model
@@ -108,21 +123,74 @@ class LapisRuntime:
         except (KeyError, RuntimeError, ValueError, OSError, TypeError) as exc:
             raise CheckpointLoadError(f"Unable to load checkpoint {path}: {exc}") from exc
 
-    def generate(self, prompt: str, sampling: SamplingConfig | None = None) -> str:
-        config = sampling or SamplingConfig()
-        config.validate()
-        token_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+    def tokenize(self, text: str) -> list[int]:
+        """Encode text using the checkpoint-compatible tokenizer."""
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+        return self.tokenizer.encode(text, add_special_tokens=False)
+
+    def get_model_info(self) -> dict[str, Any]:
+        """Return stable runtime metadata without exposing model internals."""
+        return {
+            "checkpoint": str(self.checkpoint),
+            "device": str(self.device),
+            "vocab_size": self.tokenizer.vocab_size,
+            "context_length": self.model.max_position_embeddings,
+            "parameter_count": sum(parameter.numel() for parameter in self.model.parameters()),
+            "tokenizer_version": self.tokenizer.VERSION,
+        }
+
+    def _prepare_ids(self, prompt: str) -> torch.Tensor:
+        token_ids = self.tokenize(prompt)
         if not token_ids:
             token_ids = [self.tokenizer.bos_id]
-        ids = torch.tensor([token_ids], dtype=torch.long, device=self.device)
+        context_limit = self.model.max_position_embeddings
+        if len(token_ids) > context_limit:
+            token_ids = token_ids[-context_limit:]
+        return torch.tensor([token_ids], dtype=torch.long, device=self.device)
 
+    def _iter_generated_token_ids(self, prompt: str, config: SamplingConfig) -> Iterator[int]:
+        ids = self._prepare_ids(prompt)
         with torch.inference_mode():
             for _ in range(config.max_new_tokens):
                 context = ids[:, -self.model.max_position_embeddings :]
                 logits, _ = self.model(context)
                 next_id = _sample_next_token(logits[:, -1, :], config)
                 ids = torch.cat([ids, next_id], dim=1)
-                if next_id.item() == self.tokenizer.eos_id:
+                token_id = int(next_id.item())
+                if token_id == self.tokenizer.eos_id:
                     break
+                yield token_id
 
-        return self.tokenizer.decode(ids[0].tolist(), skip_special_tokens=True)
+    def generate(self, prompt: str, sampling: SamplingConfig | None = None) -> str:
+        config = sampling or SamplingConfig()
+        config.validate()
+        generated = list(self._iter_generated_token_ids(prompt, config))
+        prompt_ids = self.tokenize(prompt)
+        context_limit = self.model.max_position_embeddings
+        if len(prompt_ids) > context_limit:
+            prompt_ids = prompt_ids[-context_limit:]
+        return self.tokenizer.decode(prompt_ids + generated, skip_special_tokens=True)
+
+    def stream_generate(self, prompt: str, sampling: SamplingConfig | None = None) -> Iterator[str]:
+        """Yield text chunks only after the decoded prefix is stable."""
+        config = sampling or SamplingConfig()
+        config.validate()
+        generated: list[int] = []
+        emitted = ""
+        previous = ""
+
+        for token_id in self._iter_generated_token_ids(prompt, config):
+            generated.append(token_id)
+            current = self.tokenizer.decode(generated, skip_special_tokens=True)
+            stable_length = 0
+            limit = min(len(previous), len(current))
+            while stable_length < limit and previous[stable_length] == current[stable_length]:
+                stable_length += 1
+            if stable_length > len(emitted):
+                yield current[len(emitted) : stable_length]
+                emitted = current[:stable_length]
+            previous = current
+
+        if len(previous) > len(emitted):
+            yield previous[len(emitted) :]

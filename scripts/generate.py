@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 import torch
@@ -15,6 +16,7 @@ from lapis.tokenizer.tokenizer import Tokenizer
 
 
 def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> None:
+    """Validate tokenizer metadata embedded in a checkpoint."""
     checkpoint_version = checkpoint.get("tokenizer_version")
     if checkpoint_version is not None and checkpoint_version != tokenizer.VERSION:
         raise ValueError(
@@ -31,24 +33,26 @@ def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> Non
 
 
 def validate_sampling_args(max_new_tokens: int, temperature: float, top_k: int, top_p: float) -> None:
+    """Validate generation controls before sampling."""
+    if not isinstance(max_new_tokens, int) or isinstance(max_new_tokens, bool):
+        raise ValueError("max_new_tokens must be an integer")
     if max_new_tokens < 1:
         raise ValueError("max_new_tokens must be at least 1")
-    if temperature <= 0:
-        raise ValueError("temperature must be greater than 0")
+    if not isinstance(temperature, (int, float)) or isinstance(temperature, bool) or not math.isfinite(temperature) or temperature <= 0:
+        raise ValueError("temperature must be finite and greater than 0")
+    if not isinstance(top_k, int) or isinstance(top_k, bool):
+        raise ValueError("top_k must be an integer")
     if top_k < 0:
         raise ValueError("top_k must be >= 0")
-    if not 0 < top_p <= 1:
-        raise ValueError("top_p must be in the range (0, 1]")
+    if not isinstance(top_p, (int, float)) or isinstance(top_p, bool) or not math.isfinite(top_p) or not 0 < top_p <= 1:
+        raise ValueError("top_p must be finite and in the range (0, 1]")
 
 
 def sample_next_token(logits, temperature, top_k, top_p):
-    if temperature <= 0:
-        raise ValueError("temperature must be greater than 0")
-    if top_k < 0:
-        raise ValueError("top_k must be >= 0")
-    if not 0 < top_p <= 1:
-        raise ValueError("top_p must be in the range (0, 1]")
-
+    """Apply validated temperature, top-k, and top-p sampling to model logits."""
+    validate_sampling_args(1, temperature, top_k, top_p)
+    if not torch.isfinite(logits).all():
+        raise RuntimeError("Model produced non-finite logits")
     logits = logits / temperature
 
     if top_k > 0:
@@ -63,6 +67,8 @@ def sample_next_token(logits, temperature, top_k, top_p):
     if top_p < 1.0:
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
         probabilities = torch.softmax(sorted_logits, dim=-1)
+        if not torch.isfinite(probabilities).all():
+            raise RuntimeError("Sampling produced non-finite probabilities")
         cumulative = torch.cumsum(probabilities, dim=-1)
         remove = cumulative - probabilities > top_p
         sorted_logits = sorted_logits.masked_fill(remove, float("-inf"))
@@ -76,17 +82,22 @@ def sample_next_token(logits, temperature, top_k, top_p):
 
 
 def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p):
+    """Generate a decoded continuation from an already-loaded model and tokenizer."""
     validate_sampling_args(max_new_tokens, temperature, top_k, top_p)
     token_ids = tokenizer.encode(prompt, add_special_tokens=False)
     if not token_ids:
         token_ids = [tokenizer.bos_id]
+
+    context_limit = model.max_position_embeddings
+    if len(token_ids) > context_limit:
+        token_ids = token_ids[-context_limit:]
 
     device = next(model.parameters()).device
     ids = torch.tensor([token_ids], dtype=torch.long, device=device)
 
     with torch.inference_mode():
         for _ in range(max_new_tokens):
-            context = ids[:, -model.max_position_embeddings :]
+            context = ids[:, -context_limit:]
             logits, _ = model(context)
             next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p)
             ids = torch.cat([ids, next_id], dim=1)
@@ -97,6 +108,7 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
 
 
 def main() -> None:
+    """Run the command-line generation utility."""
     parser = argparse.ArgumentParser(description="Generate text with Lapis")
     parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
     parser.add_argument(

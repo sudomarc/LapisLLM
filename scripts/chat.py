@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive local Lapis chat for the user-facing inference runtime."""
+"""Interactive developer inference/testing console for LapisLLM."""
 
 from __future__ import annotations
 
@@ -9,11 +9,8 @@ import sys
 import time
 from pathlib import Path
 
-import torch
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lapis.config.base import load_config
 from lapis.inference.runtime import LapisRuntime, SamplingConfig
 
 RESET = "\033[0m"
@@ -21,143 +18,96 @@ BOLD = "\033[1m"
 DIM = "\033[2m"
 ACCENT = "\033[38;5;180m"
 MUTED = "\033[38;5;245m"
-USER = "\033[38;5;117m"
+INPUT = "\033[38;5;117m"
 ASSISTANT = "\033[38;5;183m"
 ERROR = "\033[38;5;203m"
 SUCCESS = "\033[38;5;114m"
 
 
 def paint(value: str, style: str, enabled: bool) -> str:
+    """Apply a terminal style when color output is enabled."""
     return f"{style}{value}{RESET}" if enabled else value
 
 
 def ui_enabled(no_color: bool) -> bool:
+    """Return whether the interactive console should emit ANSI color codes."""
     return not no_color and sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"
 
 
-def load_chat_model(checkpoint_path: Path, device: str) -> LapisRuntime:
-    """Load the model through the shared inference-only API."""
-    return LapisRuntime.from_checkpoint(checkpoint_path, device)
-
-
 def render_header(*, runtime: LapisRuntime, color: bool) -> None:
+    """Render the developer-console header from stable runtime metadata."""
+    info = runtime.get_model_info()
     width = 66
+    title = "│  L A P I S"
+    status = f"  developer inference · {info['device']} · context {info['context_length'] - 1}"
     print()
     print(paint("╭" + "─" * width + "╮", ACCENT, color))
-    print(paint("│", ACCENT, color) + paint("  L A P I S", BOLD + ACCENT, color) + " " * (width - 13) + paint("│", ACCENT, color))
-    status = f"  local inference · {runtime.device} · context {runtime.model.max_position_embeddings - 1}"
-    print(paint("│", ACCENT, color) + paint(status, MUTED, color) + " " * max(0, width - len(status)) + paint("│", ACCENT, color))
+    print(paint(title + " " * (width + 2 - len(title)) + "│", BOLD + ACCENT, color))
+    print(paint("│" + status + " " * max(0, width - len(status)) + "│", MUTED, color))
     print(paint("╰" + "─" * width + "╯", ACCENT, color))
     print()
-    print(paint("/help", USER, color) + paint(" commands  ", MUTED, color) + paint("/stats", USER, color) + paint(" session  ", MUTED, color) + paint("/context", USER, color) + paint(" context  ", MUTED, color) + paint("/exit", USER, color) + paint(" quit", MUTED, color))
+    print(paint("/help", INPUT, color) + " commands  " + paint("/stats", INPUT, color) + " runtime  " + paint("/context", INPUT, color) + " context  " + paint("/exit", INPUT, color) + " quit")
     print()
 
 
 def build_prompt(messages: list[tuple[str, str]]) -> str:
-    lines: list[str] = []
-    for role, content in messages:
-        prefix = "User" if role == "user" else "Lapis"
-        lines.append(f"{prefix}: {content}")
+    """Build the plain-text prompt used by the developer inference console."""
+    lines = [f"{'Input' if role == 'input' else 'Lapis'}: {content}" for role, content in messages]
     lines.append("Lapis:")
     return "\n".join(lines)
 
 
 def count_context_tokens(runtime: LapisRuntime, messages: list[tuple[str, str]]) -> int:
-    return len(runtime.tokenizer.encode(build_prompt(messages), add_special_tokens=False))
-
-
-def sample_next_token(logits: torch.Tensor, config: SamplingConfig) -> torch.Tensor:
-    """Compatibility helper for the streaming TUI; policy matches LapisRuntime."""
-    config.validate()
-    logits = logits / config.temperature
-    if config.top_k > 0:
-        values, _ = torch.topk(logits, min(config.top_k, logits.size(-1)))
-        cutoff = values[..., -1, None]
-        logits = torch.where(logits < cutoff, torch.full_like(logits, float("-inf")), logits)
-    if config.top_p < 1.0:
-        sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-        probabilities = torch.softmax(sorted_logits, dim=-1)
-        cumulative = torch.cumsum(probabilities, dim=-1)
-        remove = cumulative - probabilities > config.top_p
-        sorted_logits = sorted_logits.masked_fill(remove, float("-inf"))
-        logits = torch.full_like(logits, float("-inf"))
-        logits.scatter_(dim=-1, index=sorted_indices, src=sorted_logits)
-    probabilities = torch.softmax(logits, dim=-1)
-    if not torch.isfinite(probabilities).all():
-        raise RuntimeError("Sampling produced non-finite probabilities")
-    return torch.multinomial(probabilities, num_samples=1)
+    """Return the number of tokens currently represented by the console prompt."""
+    return len(runtime.tokenize(build_prompt(messages)))
 
 
 def stream_response(runtime: LapisRuntime, prompt: str, config: SamplingConfig, color: bool) -> str:
-    token_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
-    if not token_ids:
-        token_ids = [runtime.tokenizer.bos_id]
-    ids = torch.tensor([token_ids], dtype=torch.long, device=runtime.device)
-    generated: list[int] = []
-    displayed = ""
+    """Stream one developer inference response and report generation throughput."""
     print(paint("Lapis", ASSISTANT, color) + paint(" › ", DIM, color), end="", flush=True)
     started = time.monotonic()
-    with torch.inference_mode():
-        for _ in range(config.max_new_tokens):
-            context = ids[:, -runtime.model.max_position_embeddings :]
-            logits, _ = runtime.model(context)
-            next_id = sample_next_token(logits[:, -1, :], config)
-            ids = torch.cat([ids, next_id], dim=1)
-            token_id = int(next_id.item())
-            if token_id == runtime.tokenizer.eos_id:
-                break
-            generated.append(token_id)
-            text = runtime.tokenizer.decode(generated, skip_special_tokens=True)
-            delta = text[len(displayed) :] if text.startswith(displayed) else text
-            if delta:
-                print(delta, end="", flush=True)
-                displayed = text
+    chunks: list[str] = []
+    for chunk in runtime.stream_generate(prompt, config):
+        print(chunk, end="", flush=True)
+        chunks.append(chunk)
     duration = time.monotonic() - started
-    tokens_per_second = len(generated) / duration if duration > 0 else 0.0
+    text = "".join(chunks)
+    token_count = len(runtime.tokenize(text))
+    rate = token_count / duration if duration > 0 else 0.0
     print()
-    print(paint(f"  {len(generated)} tokens · {tokens_per_second:.1f} tok/s", DIM, color))
-    return displayed
+    print(paint(f"  {token_count} tokens · {rate:.1f} tok/s", DIM, color))
+    return text
 
 
-def save_conversation(path: Path, messages: list[tuple[str, str]]) -> None:
+def save_session(path: Path, messages: list[tuple[str, str]]) -> None:
+    """Save the current developer session as a simple Markdown transcript."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"## {'User' if role == 'user' else 'Lapis'}\n\n{content}\n" for role, content in messages]
+    lines = [f"## {'Input' if role == 'input' else 'Lapis'}\n\n{content}\n" for role, content in messages]
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Chat with Lapis in the terminal")
-    parser.add_argument("--config", default="configs/user/default.yaml")
-    parser.add_argument("--checkpoint", default=None)
-    parser.add_argument("--device", default=None)
-    parser.add_argument("--max-new-tokens", type=int, default=None)
-    parser.add_argument("--temperature", type=float, default=None)
-    parser.add_argument("--top-k", type=int, default=None)
-    parser.add_argument("--top-p", type=float, default=None)
+    """Run the interactive developer inference console."""
+    parser = argparse.ArgumentParser(description="Developer inference and checkpoint-testing console")
+    parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--top-k", type=int, default=40)
+    parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args()
 
     try:
-        user_config = load_config(args.config)
-        checkpoint = args.checkpoint or str(user_config.get("model", "latest"))
-        if checkpoint == "latest":
-            checkpoint = "checkpoints/latest.pt"
-        device = args.device or str(user_config.get("device", "auto"))
-        sampling = SamplingConfig(
-            max_new_tokens=int(args.max_new_tokens if args.max_new_tokens is not None else user_config.get("max_new_tokens", 128)),
-            temperature=float(args.temperature if args.temperature is not None else user_config.get("temperature", 0.8)),
-            top_k=int(args.top_k if args.top_k is not None else user_config.get("top_k", 40)),
-            top_p=float(args.top_p if args.top_p is not None else user_config.get("top_p", 0.95)),
-        )
+        sampling = SamplingConfig(args.max_new_tokens, args.temperature, args.top_k, args.top_p)
         sampling.validate()
-        runtime = load_chat_model(Path(checkpoint), device)
+        runtime = LapisRuntime.from_checkpoint(Path(args.checkpoint), args.device)
     except (FileNotFoundError, KeyError, RuntimeError, ValueError, OSError, TypeError) as exc:
-        print(paint("Unable to load the model. Check that a valid checkpoint is installed.", ERROR, not args.no_color), file=sys.stderr)
-        if os.environ.get("LAPIS_DEV") == "1":
-            print(paint(f"Developer detail: {exc}", DIM, not args.no_color), file=sys.stderr)
+        print(paint(f"Unable to load checkpoint: {exc}", ERROR, not args.no_color), file=sys.stderr)
         raise SystemExit(1) from exc
 
     color = ui_enabled(args.no_color)
+    info = runtime.get_model_info()
     messages: list[tuple[str, str]] = []
     generated_tokens = 0
     session_started = time.monotonic()
@@ -167,7 +117,7 @@ def main() -> None:
 
     while True:
         try:
-            user_input = input(paint("› ", USER + BOLD, color)).strip()
+            user_input = input(paint("› ", INPUT + BOLD, color)).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -186,19 +136,20 @@ def main() -> None:
             continue
         if command == "/reset":
             messages.clear()
-            print(paint("✓ Conversation context reset", SUCCESS, color))
+            print(paint("✓ Session context reset", SUCCESS, color))
             continue
         if command == "/stats":
+            info = runtime.get_model_info()
             context_tokens = count_context_tokens(runtime, messages)
-            print(f"model {runtime.checkpoint.name}\ndevice {runtime.device}\nparameters {sum(p.numel() for p in runtime.model.parameters()):,}\nmessages {len(messages)}\ncontext {context_tokens}/{runtime.model.max_position_embeddings - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
+            print(f"checkpoint {info['checkpoint']}\ndevice {info['device']}\nparameters {info['parameter_count']:,}\nmessages {len(messages)}\ncontext {context_tokens}/{info['context_length'] - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
             continue
         if command == "/context":
-            context_tokens = count_context_tokens(runtime, messages)
-            limit = runtime.model.max_position_embeddings - 1
-            print(f"Context: {context_tokens}/{limit} tokens")
+            info = runtime.get_model_info()
+            print(f"Context: {count_context_tokens(runtime, messages)}/{info['context_length'] - 1} tokens")
             continue
         if command == "/model":
-            print(f"Model: {runtime.checkpoint}\nDevice: {runtime.device}\nTokenizer: {runtime.tokenizer.vocab_size:,} vocab\nContext: {runtime.model.max_position_embeddings - 1} tokens\n")
+            info = runtime.get_model_info()
+            print(f"Checkpoint: {info['checkpoint']}\nDevice: {info['device']}\nTokenizer: {info['vocab_size']:,} vocab\nContext: {info['context_length'] - 1} tokens\n")
             continue
         if command == "/temperature":
             if not argument:
@@ -223,22 +174,22 @@ def main() -> None:
                 print(paint(str(exc), ERROR, color))
             continue
         if command == "/save":
-            target = Path(argument) if argument else Path("outputs/chat-session.md")
-            save_conversation(target, messages)
-            print(paint(f"✓ Conversation saved to {target}", SUCCESS, color))
+            target = Path(argument) if argument else Path("outputs/developer-session.md")
+            save_session(target, messages)
+            print(paint(f"✓ Session saved to {target}", SUCCESS, color))
             continue
 
-        messages.append(("user", user_input))
+        messages.append(("input", user_input))
         prompt = build_prompt(messages)
-        prompt_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
-        context_limit = runtime.model.max_position_embeddings - 1
+        prompt_ids = runtime.tokenize(prompt)
+        context_limit = info["context_length"] - 1
         while len(prompt_ids) > context_limit and len(messages) > 2:
             del messages[0:2]
             prompt = build_prompt(messages)
-            prompt_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
+            prompt_ids = runtime.tokenize(prompt)
         print()
         response = stream_response(runtime, prompt, sampling, color)
-        generated_tokens += len(runtime.tokenizer.encode(response, add_special_tokens=False))
+        generated_tokens += len(runtime.tokenize(response))
         messages.append(("assistant", response))
         print()
 
