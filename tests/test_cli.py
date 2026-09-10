@@ -16,7 +16,7 @@ def test_cli_help_is_developer_only() -> None:
 
 def test_cli_without_command_shows_help() -> None:
     result = CliRunner().invoke(app, [])
-    assert result.exit_code == 0
+    assert result.exit_code == 2
     assert "Usage:" in result.stdout
     assert "dev" in result.stdout
 
