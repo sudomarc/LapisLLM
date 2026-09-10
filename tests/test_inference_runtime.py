@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
+import torch
 
-from lapis.inference.runtime import LapisRuntime, SamplingConfig
+from lapis.inference.runtime import LapisRuntime, SamplingConfig, _sample_next_token
 
 
 class FakeTokenizer:
@@ -20,6 +21,12 @@ class FakeTokenizer:
         return "".join("x" for _ in ids)
 
 
+class LongPromptTokenizer(FakeTokenizer):
+    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+        del text, add_special_tokens
+        return list(range(20))
+
+
 class FakeModel:
     max_position_embeddings = 16
 
@@ -27,10 +34,10 @@ class FakeModel:
         return iter(())
 
 
-def make_runtime() -> LapisRuntime:
+def make_runtime(tokenizer=None) -> LapisRuntime:
     runtime = object.__new__(LapisRuntime)
     runtime.model = FakeModel()
-    runtime.tokenizer = FakeTokenizer()
+    runtime.tokenizer = tokenizer or FakeTokenizer()
     runtime.device = "cpu"
     runtime.checkpoint = Path("test.pt")
     return runtime
@@ -63,7 +70,28 @@ def test_runtime_exposes_product_agnostic_helpers() -> None:
     assert info["tokenizer_version"] == "test-tokenizer"
 
 
+def test_prepare_ids_truncates_long_prompts_to_context_limit() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    ids = runtime._prepare_ids("long prompt")
+    assert ids.shape == (1, 16)
+    assert ids.tolist()[0] == list(range(4, 20))
+
+
+def test_sampling_rejects_non_finite_logits() -> None:
+    logits = torch.tensor([[0.0, float("nan"), 1.0]])
+    with pytest.raises(RuntimeError, match="non-finite logits"):
+        _sample_next_token(logits, SamplingConfig())
+
+
 def test_stream_generate_yields_incremental_text(monkeypatch) -> None:
     runtime = make_runtime()
     monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 3]))
     assert list(runtime.stream_generate("hello", SamplingConfig(max_new_tokens=2))) == ["x", "x"]
+
+
+def test_stream_generate_buffers_unstable_decoding(monkeypatch) -> None:
+    runtime = make_runtime()
+    decoded = {(3,): "�", (3, 4): "é"}
+    monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 4]))
+    runtime.tokenizer.decode = lambda ids, skip_special_tokens=True: decoded[tuple(ids)]
+    assert "".join(runtime.stream_generate("hello", SamplingConfig(max_new_tokens=2))) == "é"
