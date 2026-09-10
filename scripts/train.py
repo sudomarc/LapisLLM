@@ -30,9 +30,19 @@ def _absolute_checkpoint() -> Path:
     return Path(argv[index + 1]).resolve()
 
 
+def _has_data_file() -> bool:
+    return "--data" in sys.argv
+
+
 def main() -> None:
     _normalize_path_args()
-    _impl.main()
+    if _has_data_file():
+        from scripts import streaming_train
+
+        streaming_train.main()
+    else:
+        _impl.main()
+
     checkpoint = _absolute_checkpoint()
     if not checkpoint.is_file() or checkpoint.stat().st_size <= 0:
         raise RuntimeError(
