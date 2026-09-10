@@ -19,8 +19,12 @@ _ORIGINAL_TRAIN_ONE_RUN = _impl.train_one_run
 _ORIGINAL_POPEN = subprocess.Popen
 _PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
 HISTORY = _impl.HISTORY
-# Preserve the public API used by the legacy ``colab_run`` entry point without
-# reintroducing the wildcard import that previously hid unused/repeated names.
+# Preserve the public API used by the legacy ``colab_run`` entry point and
+# observability tests without reintroducing the wildcard import that previously
+# exposed unused/repeated names.
+METRIC_RE = _impl.METRIC_RE
+TOKEN_RE = _impl.TOKEN_RE
+format_duration = _impl.format_duration
 get_github_token = _impl.get_github_token
 main = _impl.main
 
