@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -48,11 +47,12 @@ def find_source(path: Path | None) -> Path:
             return candidate
         raise RuntimeError(f"Checkpoint not found: {candidate}")
 
-    candidates = sorted(
-        (CHECKPOINT_ROOT / "colab-runs").glob("run-*/checkpoint.pt"),
-        key=lambda item: item.stat().st_mtime,
-        reverse=True,
-    ) if (CHECKPOINT_ROOT / "colab-runs").is_dir() else []
+    run_root = CHECKPOINT_ROOT / "colab-runs"
+    candidates = (
+        sorted(run_root.glob("run-*/checkpoint.pt"), key=lambda item: item.stat().st_mtime, reverse=True)
+        if run_root.is_dir()
+        else []
+    )
     if not candidates:
         raise RuntimeError("No checkpoint was found under checkpoints/colab-runs")
     return candidates[0]
@@ -111,7 +111,7 @@ def main() -> int:
     publish(source)
     print(f"Published checkpoint: {LATEST_CHECKPOINT}")
     if not args.no_push:
-        push(f"chore: publish Lapis checkpoint")
+        push("chore: publish Lapis checkpoint")
     return 0
 
 
