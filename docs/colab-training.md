@@ -19,9 +19,15 @@ import path:
 !python -m scripts.colab_train
 ```
 
-The script installs the project dependencies, checks CUDA, builds the bounded
-pretraining corpus, launches the training job with `configs/colab.yaml`, and
-publishes each verified checkpoint into the repository checkout.
+The script installs the project dependencies, checks CUDA, builds the full
+bounded pretraining corpus, launches the training job with `configs/colab.yaml`,
+and publishes each verified checkpoint into the repository checkout.
+
+The training path for file-backed corpora is memory-bounded: the corpus is not
+loaded into one Python string, all tokenized samples are not materialized in RAM,
+and the DataLoader consumes fixed-length sequences incrementally from the file.
+The corpus size is controlled by the corpus builder's explicit `--max-chars`
+setting, not by an artificial limit in the trainer.
 
 If an older Colab runtime already cloned the repository, refresh it before
 running training:
@@ -50,6 +56,9 @@ Use a small corpus before the full run:
 ```python
 !python -m scripts.colab_train --max-chars 50000000
 ```
+
+This is an explicit corpus-builder option. The normal Colab trainer does not
+silently reduce the requested corpus.
 
 The entry point also supports direct execution with `python scripts/colab_train.py`.
 
