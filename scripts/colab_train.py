@@ -14,29 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import _colab_train_impl as _impl
-from scripts._colab_train_impl import (
-    HEARTBEAT_SECONDS,
-    METRIC_RE,
-    TOKEN_RE,
-    banner,
-    check_gpu,
-    corpus_valid,
-    ensure_dependencies,
-    format_duration,
-    generate_preview,
-    get_github_token,
-    git_push,
-    main,
-    monitor_child,
-    parse_args,
-    phase,
-    prepare_corpus,
-    run_command,
-    target_steps,
-    verify_checkpoint,
-    write_failure_history,
-    write_history,
-)
+from scripts._colab_train_impl import main
 
 _ORIGINAL_TRAIN_ONE_RUN = _impl.train_one_run
 _ORIGINAL_POPEN = subprocess.Popen
