@@ -1,7 +1,9 @@
 from pathlib import Path
 
-from scripts.streaming_train import StreamingTextDataset
+import torch
+
 from lapis.tokenizer.tokenizer import Tokenizer
+from scripts.streaming_train import StreamingTextDataset
 
 
 def test_streaming_dataset_yields_fixed_length_samples_without_materializing_dataset(
@@ -27,7 +29,7 @@ def test_streaming_dataset_yields_fixed_length_samples_without_materializing_dat
     for inputs, labels in samples:
         assert inputs.shape == (9,)
         assert labels.shape == inputs.shape
-        assert inputs.dtype.name if hasattr(inputs.dtype, "name") else str(inputs.dtype)
+        assert inputs.dtype == torch.long
         assert labels.dtype == inputs.dtype
 
     assert not hasattr(dataset, "samples")
