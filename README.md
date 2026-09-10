@@ -9,7 +9,7 @@ Build the tokenizer. Build the Transformer. Train it. Inspect what it learns.
 [![Tests](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main&label=tests)](https://github.com/sudomarc/LapisLLM/actions/workflows/tests.yml)
 [![Website](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/static.yml?branch=main&label=website)](https://github.com/sudomarc/LapisLLM/actions/workflows/static.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-EE4C2C)](https://pytorch.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.14%2B-EE4C2C)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-000000)](LICENSE)
 
 [**Website**](https://sudomarc.github.io/LapisLLM/) · [**Documentation**](docs/) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](https://sudomarc.github.io/LapisLLM/roadmap/)
@@ -561,49 +561,25 @@ These are roadmap items, not hidden assumptions.
 
 ### Phase 3 — Scale and evaluation
 
-- [ ] Reproducible benchmark suite
-- [ ] Larger model configurations
-- [ ] Mixed precision
-- [ ] Efficient attention / KV cache
-- [ ] Distributed training
-- [ ] Model release artifacts
-
-## Skills
-
-The Lapis website also contains a modular skills layer for developer workflows, including security audit, PR engineering, documentation, benchmarking, dataset cleaning, web testing, and release management.
-
-Skills are treated as versioned specifications with explicit inputs, outputs, limitations, and safety boundaries. They do not imply unrestricted autonomous access to external systems.
+- [ ] Reproducible benchmark harness
+- [ ] Larger training configurations
+- [ ] More robust data pipeline
+- [ ] Inference performance profiling
+- [ ] Distributed training research
 
 ## Contributing
 
-Contributions should preserve the project's emphasis on correctness and reproducibility.
+Pull requests are welcome. Keep changes narrow, test behavioral changes, and preserve compatibility unless a breaking change is explicitly justified.
 
-Before opening a pull request:
+Before opening a PR:
 
 ```bash
 python -m pytest
 ruff check .
 ```
 
-For behavior changes, add or update tests. For architecture changes, update the relevant documentation and changelog.
-
-See [`AGENTS.md`](AGENTS.md) for repository-specific engineering rules.
+For model/training changes, include the relevant smoke test or regression test.
 
 ## License
 
-LapisLLM is released under the MIT License. See [`LICENSE`](LICENSE).
-
-## Citation
-
-```bibtex
-@software{lapisllm2026,
-  author = {sudomarc},
-  title = {LapisLLM: A From-Scratch Decoder-Only Transformer Language Model},
-  year = {2026},
-  url = {https://github.com/sudomarc/LapisLLM}
-}
-```
-
-## Contact
-
-Issues and discussions are the preferred way to report reproducibility problems, bugs, and proposed architectural changes.
+LapisLLM is released under the MIT License. See [`LICENSE`](LICENSE) for the full text.

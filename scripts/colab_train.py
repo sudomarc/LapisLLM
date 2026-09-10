@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -15,12 +14,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import _colab_train_impl as _impl
-from scripts._colab_train_impl import *  # noqa: F401,F403
 
 _ORIGINAL_TRAIN_ONE_RUN = _impl.train_one_run
 _ORIGINAL_POPEN = subprocess.Popen
 _PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
 HISTORY = _impl.HISTORY
+# Preserve the public API used by the legacy ``colab_run`` entry point and
+# observability tests without reintroducing the wildcard import that previously
+# exposed unused/repeated names.
+METRIC_RE = _impl.METRIC_RE
+TOKEN_RE = _impl.TOKEN_RE
+format_duration = _impl.format_duration
+get_github_token = _impl.get_github_token
+main = _impl.main
 
 
 def _absolute_child_paths(command: list[str]) -> list[str]:
@@ -33,19 +39,14 @@ def _absolute_child_paths(command: list[str]) -> list[str]:
 
 def completed_run_numbers() -> set[int]:
     """Return completed runs while preserving legacy summaries without status."""
-    numbers: set[int] = set()
-    if not HISTORY.is_dir():
-        return numbers
-    for summary in HISTORY.glob("run-*/summary.json"):
-        try:
-            data = json.loads(summary.read_text(encoding="utf-8"))
-            number = int(data["run_number"])
-            status = data.get("status", "completed")
-            if status == "completed":
-                numbers.add(number)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            continue
-    return numbers
+    # Keep the wrapper's historical monkeypatch surface while delegating the
+    # actual classification policy to the canonical implementation.
+    original_history = _impl.HISTORY
+    _impl.HISTORY = HISTORY
+    try:
+        return _impl.completed_run_numbers()
+    finally:
+        _impl.HISTORY = original_history
 
 
 def train_one_run(run_number: int, total_runs: int, args, device: str, config: Path) -> dict:
@@ -63,9 +64,7 @@ def train_one_run(run_number: int, total_runs: int, args, device: str, config: P
         _impl.subprocess.Popen = _ORIGINAL_POPEN
 
 
-_impl.completed_run_numbers = completed_run_numbers
 _impl.train_one_run = train_one_run
-main = _impl.main
 
 
 if __name__ == "__main__":
