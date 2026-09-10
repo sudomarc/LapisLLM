@@ -3,14 +3,29 @@ from typer.testing import CliRunner
 from lapis.cli import app
 
 
-def test_cli_help() -> None:
+def test_cli_help_is_developer_only() -> None:
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "simple user inference" in result.stdout
-    assert "chat" in result.stdout
+    assert "language-model engine" in result.stdout
+    assert "developer" in result.stdout.lower()
     assert "dev" in result.stdout
     assert "system" in result.stdout
-    assert "train" not in result.stdout
+    assert "chat" not in result.stdout
+    assert "simple user inference" not in result.stdout
+
+
+def test_cli_without_command_shows_help() -> None:
+    result = CliRunner().invoke(app, [])
+    assert result.exit_code == 0
+    assert "Usage:" in result.stdout
+    assert "dev" in result.stdout
+
+
+def test_dev_mode_help_includes_developer_inference() -> None:
+    result = CliRunner().invoke(app, ["dev", "--help"])
+    assert result.exit_code == 0
+    for command in ("chat", "train", "evaluate", "generate", "benchmark", "inspect"):
+        assert command in result.stdout
 
 
 def test_system_command() -> None:
