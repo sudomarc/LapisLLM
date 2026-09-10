@@ -4,31 +4,11 @@ Testing in LapisLLM is a lifecycle that spans local development, pull requests, 
 
 The goal is not simply to obtain a green test command. The goal is to establish evidence that a change preserves correctness across the execution paths and boundaries it can affect.
 
-## Testing levels
+## Before a pull request
 
-Use the smallest useful test first, then widen validation according to risk.
+Use the smallest useful validation first, then widen the scope according to risk.
 
-```text
-single regression test
-        ↓
-targeted test module
-        ↓
-affected regression suite
-        ↓
-repository test suite
-        ↓
-CI matrix / specialized checks
-```
-
-Do not jump directly to expensive validation when a narrow test can expose a failure more quickly.
-
-## Before opening a PR
-
-Every meaningful change should have a validation plan before the PR is opened.
-
-### Normal Python changes
-
-Run:
+For normal Python changes:
 
 ```bash
 python -m pytest --cov=lapis --cov-report=term-missing
@@ -36,221 +16,54 @@ ruff check .
 python -m pip_audit
 ```
 
-### Bug fixes
-
-A bug fix should normally produce a regression test that fails before the fix and passes after it.
-
-```text
-reproduce
-  ↓
-regression test
-  ↓
-confirm failure
-  ↓
-smallest correct fix
-  ↓
-confirm same test passes
-  ↓
-affected regression suite
-  ↓
-broader validation
-```
-
-The test should protect the behavior that was actually broken, not merely exercise nearby code.
-
-### Model and training changes
-
-In addition to normal tests, validate the training path with a tiny deterministic run when practical.
-
-```bash
-python -m scripts.train --config configs/tiny.yaml --epochs 1 --device cpu
-python -m scripts.evaluate --checkpoint checkpoints/latest.pt --device cpu
-```
-
-A useful micro-test covers:
-
-```text
-input → tokenizer → model → logits → loss → backpropagation
-```
-
-### Inference and generation changes
-
-Validate checkpoint-backed inference and, where applicable:
-
-- empty prompts;
-- long prompts and context limits;
-- EOS and stopping behavior;
-- maximum token limits;
-- sampling parameters;
-- deterministic seeds;
-- invalid or non-finite parameters;
-- CPU and CUDA behavior when available.
-
-### Configuration changes
-
-Test both valid and invalid configuration values, especially boundary and non-finite values.
-
-Where relevant, cover:
-
-- zero and negative values;
-- minimum and maximum supported values;
-- `NaN`;
-- `+Inf` and `-Inf`;
-- impossible architecture combinations;
-- invalid paths and missing files.
-
-### Checkpoint and serialization changes
-
-Validate:
-
-- save and load;
-- missing files;
-- corrupted files;
-- architecture mismatch;
-- tokenizer mismatch;
-- metadata compatibility;
-- device and dtype behavior;
-- resume behavior where supported.
-
-### Packaging and API changes
-
-Validate build/install behavior and public imports when packaging or public interfaces change.
-
-For API/runtime changes, test request validation, runtime dispatch, error handling, streaming behavior where applicable, and compatibility with external consumers such as CHAD.
+For a bug fix, add a regression test that fails before the fix and passes after it. Then run the affected regression suite and broader repository validation.
 
 ## Pull request CI
 
 GitHub Actions is the authoritative automated validation layer for the PR.
 
-A PR should be considered ready only after the actual required checks for its final commit have completed successfully.
+After opening a PR, inspect every required check. Investigate failed, cancelled, skipped, or unexpectedly missing checks. After any meaningful change, rerun targeted tests and the affected regression suite and validate the new final commit.
 
-CI failures must be investigated. A failure may be:
+Do not rely on stale CI results from an earlier commit.
 
-- introduced by the PR;
-- pre-existing;
-- environment-specific;
-- flaky; or
-- caused by a missing/incorrect CI configuration.
+## Risk-based validation
 
-Do not assume the cause without evidence.
+### Model and training
 
-If a commit changes after CI succeeds, the new commit requires new validation.
+Validate the path `input -> tokenizer -> model -> logits -> loss -> backpropagation` and consider tensor shapes, device/dtype behavior, causal masking, RoPE, vocabulary compatibility, numerical stability, gradients, reproducibility, checkpoint compatibility, and CPU/CUDA behavior when available.
 
-## Required PR evidence
+### Inference and generation
 
-A PR description should state:
+Test empty prompts, long prompts, context limits, EOS/stop behavior, token limits, sampling controls, deterministic seeds, invalid settings, and checkpoint-backed inference where supported.
 
-1. what behavior changed;
-2. which tests were added or changed;
-3. which targeted tests were run;
-4. which broader checks were run;
-5. which relevant checks were not run and why;
-6. what regression or compatibility risk remains.
+### Configuration
 
-Use command output and GitHub check results as evidence rather than statements such as “tests should pass”.
+Test valid and invalid boundaries, including zero, negative, minimum/maximum values, missing paths, impossible architecture combinations, `NaN`, `+Inf`, and `-Inf` wherever relevant.
 
-## Edge-case expectations
+### Checkpoints and serialization
 
-When applicable, explicitly consider:
+Validate save/load, missing or corrupt files, architecture/tokenizer mismatch, metadata compatibility, device/dtype behavior, and resume behavior where supported.
 
-- empty input;
-- malformed input;
-- missing resources;
-- corrupt resources;
-- boundary lengths and values;
-- wrong dtype;
-- wrong device;
-- wrong tensor shapes;
-- negative values;
-- zero values;
-- extremely large or small values;
-- `NaN` and infinities;
-- repeated execution;
-- deterministic execution;
-- context-length boundaries;
-- EOS behavior;
-- dependency/version differences.
+### Packaging and APIs
 
-## After a PR is opened
+Validate build/install behavior and public imports. For runtime/API changes, test request validation, dispatch, error handling, streaming where applicable, and compatibility with external consumers such as CHAD.
 
-After opening a PR:
+## Edge cases
 
-```text
-CI starts
-   ↓
-inspect every required check
-   ↓
-fix failures introduced by the PR
-   ↓
-rerun targeted tests
-   ↓
-rerun affected regression tests
-   ↓
-confirm final CI state
-```
-
-Do not merge based on stale results from an earlier commit.
-
-Unexpectedly missing or skipped required checks are themselves a validation problem.
+Consider empty and malformed input, missing/corrupt resources, boundary values, wrong dtype/device/shape, extreme values, NaN/infinities, repeated execution, deterministic execution, context boundaries, EOS behavior, and dependency/version differences where applicable.
 
 ## Before merge
 
-Before merging:
-
-- the final diff must be reviewed;
-- the final commit must be identified;
-- required checks for that final commit must be green;
-- unresolved test failures must have an explicit disposition;
-- the PR must not contain secrets or unintended runtime artifacts.
+The final PR state must satisfy the repository's required checks. Review the complete final diff, identify the final commit, confirm required checks are green for that commit, and explicitly disposition unresolved failures or skipped checks.
 
 ## After merge
 
-The same project standards continue on `main`.
+Fast post-merge validation should protect `main`. More expensive scheduled validation may cover expanded Python compatibility, extended inference/generation tests, longer training smoke tests, property-based or fuzz tests, dependency/security audits, packaging verification, and benchmark/regression monitoring.
 
-Fast post-merge validation should cover the core repository contract. Expensive validation can run separately when it is not appropriate for every PR.
-
-Useful scheduled checks include:
-
-- expanded Python compatibility;
-- extended inference/generation regression tests;
-- longer training smoke tests;
-- property-based tests;
-- fuzz tests;
-- dependency vulnerability audits;
-- packaging/install verification;
-- performance and benchmark regression detection.
-
-A post-merge failure is not automatically “someone else’s problem”. It is evidence that the repository state requires investigation.
-
-## ML-specific regression discipline
-
-For changes to numerical or model code, prioritize correctness over speed.
-
-Check:
-
-- tensor shapes and broadcasting;
-- causal masking;
-- RoPE parameters and caches;
-- vocabulary/tokenizer compatibility;
-- numerical stability;
-- NaN/Inf propagation;
-- gradient behavior;
-- RNG state and reproducibility;
-- context limits;
-- checkpoint compatibility.
-
-Do not claim improved model quality, benchmark results, or training success without reproducible evidence.
+A post-merge failure is a repository regression signal and must be investigated.
 
 ## Test maintenance
 
-When a test exposes a real regression, keep the test unless the underlying contract intentionally changes.
+Tests are part of the repository contract. Do not delete a real regression test, weaken assertions, silently increase numerical tolerances, skip validation without documenting why, or disable checks merely to make CI green.
 
-Do not:
-
-- delete a failing regression test to make CI green;
-- weaken assertions solely to accommodate a bug;
-- skip a test without documenting the reason;
-- silently increase tolerances to hide numerical regressions;
-- disable CI checks because they are inconvenient.
-
-Tests are part of the repository contract.
+Do not claim model quality, benchmark improvements, training success, or test success without reproducible evidence.
