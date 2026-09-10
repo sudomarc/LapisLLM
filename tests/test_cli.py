@@ -30,7 +30,7 @@ def test_cli_without_command_shows_help() -> None:
 def test_top_level_chat_is_not_exposed() -> None:
     result = runner.invoke(app, ["chat"])
     assert result.exit_code != 0
-    assert "No such command" in result.stdout
+    assert "No such command" in result.output
 
 
 def test_dev_mode_help_includes_developer_inference() -> None:
