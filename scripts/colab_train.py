@@ -21,6 +21,8 @@ TOKEN_RE = _impl.TOKEN_RE
 format_duration = _impl.format_duration
 get_github_token = _impl.get_github_token
 
+COLAB_MAX_CHARS = 20_000_000
+
 
 def completed_run_numbers() -> set[int]:
     original = _impl.HISTORY
@@ -111,12 +113,25 @@ def train_one_run(run_number: int, total_runs: int, args, device: str, config: P
 
 
 def main() -> int:
-    """Run Colab training with one non-interactive run by default."""
+    """Run Colab training with one non-interactive run and bounded corpus memory."""
     if len(sys.argv) == 1:
         sys.argv.append("--runs")
         sys.argv.append("1")
     elif "--runs" not in sys.argv:
         sys.argv.extend(["--runs", "1"])
+
+    if "--max-chars" not in sys.argv:
+        sys.argv.extend(["--max-chars", str(COLAB_MAX_CHARS)])
+
+    # A previous Colab session may have produced a larger corpus. Remove it so
+    # the bounded setting actually takes effect on the next run.
+    corpus = _impl.CORPUS
+    manifest = _impl.MANIFEST
+    if corpus.is_file() and corpus.stat().st_size > COLAB_MAX_CHARS:
+        corpus.unlink()
+        if manifest.exists():
+            manifest.unlink()
+
     _impl.train_one_run = train_one_run
     return _impl.main()
 
