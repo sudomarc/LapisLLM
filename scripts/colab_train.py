@@ -39,8 +39,6 @@ def _absolute_child_paths(command: list[str]) -> list[str]:
 
 def completed_run_numbers() -> set[int]:
     """Return completed runs while preserving legacy summaries without status."""
-    # Keep the wrapper's historical monkeypatch surface while delegating the
-    # actual classification policy to the canonical implementation.
     original_history = _impl.HISTORY
     _impl.HISTORY = HISTORY
     try:
@@ -49,8 +47,14 @@ def completed_run_numbers() -> set[int]:
         _impl.HISTORY = original_history
 
 
+def _stage_latest_checkpoint() -> None:
+    """Copy the newest verified Colab checkpoint into the canonical user path."""
+    publish = [sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"]
+    subprocess.run(publish, cwd=ROOT, check=True)
+
+
 def train_one_run(run_number: int, total_runs: int, args, device: str, config: Path) -> dict:
-    """Run the canonical trainer while forcing absolute child artifact paths."""
+    """Run the canonical trainer while forcing paths and publishing its checkpoint."""
 
     def popen(command, *popen_args, **popen_kwargs):
         return _ORIGINAL_POPEN(
@@ -59,7 +63,9 @@ def train_one_run(run_number: int, total_runs: int, args, device: str, config: P
 
     _impl.subprocess.Popen = popen
     try:
-        return _ORIGINAL_TRAIN_ONE_RUN(run_number, total_runs, args, device, config)
+        result = _ORIGINAL_TRAIN_ONE_RUN(run_number, total_runs, args, device, config)
+        _stage_latest_checkpoint()
+        return result
     finally:
         _impl.subprocess.Popen = _ORIGINAL_POPEN
 
