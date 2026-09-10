@@ -46,8 +46,6 @@ def _training_command(config: Path, device: str | None, data: Path | None, check
 
 
 def _serve_api(checkpoint: Path, host: str, port: int, device: str) -> None:
-    if not 1 <= port <= 65535:
-        raise typer.BadParameter("port must be in the range 1..65535")
     _run([
         sys.executable,
         "-m",
@@ -71,7 +69,7 @@ def main_callback(ctx: typer.Context) -> None:
 
 
 app.add_typer(dev_app, name="dev")
-app.add_typer(api_app)
+app.add_typer(api_app, name="api")
 
 
 @app.command("train", hidden=True)
