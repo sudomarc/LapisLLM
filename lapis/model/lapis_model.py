@@ -75,7 +75,7 @@ class LapisModel(nn.Module):
         complex64, so temporarily remove the non-persistent buffer before the
         generic conversion and rebuild it on the resulting device.
         """
-        freqs_cis = self._buffers.pop("freqs_cis", None)
+        self._buffers.pop("freqs_cis", None)
         try:
             super()._apply(fn)
         finally:
