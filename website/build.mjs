@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import vm from "node:vm";
 const root=new URL(".",import.meta.url).pathname;
 const lintOnly=process.argv.includes("--lint"),bad=[];
 const p=(x)=>path.join(root,x),exists=(x)=>fs.existsSync(p(x));
@@ -9,7 +10,7 @@ const inline=(v)=>esc(v).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([
 function md(src){const out=[];let code=false,buf=[],list=false;const close=()=>{if(list){out.push("</ul>");list=false;}};for(const raw of String(src).replaceAll("\r\n","\n").split("\n")){const s=raw.trim();if(s.startsWith("```")){close();if(code){out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);buf=[];code=false;}else code=true;continue;}if(code){buf.push(raw);continue;}if(!s){close();continue;}const h=/^(#{1,3})\s+(.+)$/.exec(s);if(h){close();out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);continue;}const b=/^[-*]\s+(.+)$/.exec(s);if(b){if(!list){out.push("<ul>");list=true;}out.push(`<li>${inline(b[1])}</li>`);continue;}close();out.push(`<p>${inline(s)}</p>`);}close();if(code)out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);return out.join("");}
 function fm(src){const m=/^---\n([\s\S]*?)\n---\n([\s\S]*)$/m.exec(src);if(!m)return{meta:{},body:src};const meta={};for(const l of m[1].split("\n")){const i=l.indexOf(":");if(i>0)meta[l.slice(0,i).trim()]=l.slice(i+1).trim().replace(/^['"]|['"]$/g,"");}return{meta,body:m[2]};}
 function section(src,name){const ls=src.split("\n"),i=ls.findIndex(l=>l.trim().toLowerCase()===`## ${name.toLowerCase()}`);if(i<0)return"";const r=[];for(let j=i+1;j<ls.length&&!/^##\s+/.test(ls[j].trim());j++)r.push(ls[j]);return r.join("\n").trim();}
-function data(){const prefix="window.LAPIS_DATA=";const src=fs.readFileSync(p("data.js"),"utf8").trim();if(!src.startsWith(prefix))throw Error("invalid data.js");const start=src.indexOf("{",prefix.length),end=src.lastIndexOf("}");if(start<0||end<start)throw Error("invalid data payload");return JSON.parse(src.slice(start,end+1));}
+function data(){const src=fs.readFileSync(p("data.js"),"utf8");const context={window:{}};new vm.Script(src,{filename:p("data.js")}).runInNewContext(context);const value=context.window.LAPIS_DATA;if(!value||typeof value!=="object")throw Error("invalid data.js");return value;}
 function enrich(entries,dir,isSkill=false){return entries.map(e=>{const rel=isSkill?`content/skills/${e.slug}/SKILL.md`:`${dir}/${e.slug}.md`;if(!exists(rel)){bad.push(`missing source ${rel}`);return e;}const src=fs.readFileSync(p(rel),"utf8"),x=isSkill?fm(src):{meta:{},body:src};return {...e,...x.meta,sourcePath:rel,contentMd:x.body,contentHtml:md(x.body),...(isSkill?{inputs:section(x.body,"Inputs"),outputs:section(x.body,"Outputs"),workflow:section(x.body,"Workflow"),limitations:section(x.body,"Limitations"),safety:section(x.body,"Safety")}:{})};});}
 function walk(dir,out=[]){for(const n of fs.readdirSync(dir)){const f=path.join(dir,n),s=fs.statSync(f);if(s.isDirectory()&&n!=="node_modules")walk(f,out);else if(n.endsWith(".html"))out.push(f);}return out;}
 for(const r of ["index.html","404.html","models/index.html","skills/index.html","docs/index.html","research/index.html","roadmap/index.html","changelog/index.html","about/index.html"])if(!exists(r))bad.push(`missing ${r}`);
