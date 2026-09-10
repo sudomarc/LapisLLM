@@ -41,8 +41,6 @@ prepare_data = "scripts.prepare_data:main"
 train = "scripts.train:main"
 evaluate = "scripts.evaluate:main"
 generate = "scripts.generate:main"
-chat = "scripts.chat:main"
-lapis-chat = "scripts.chat:main"
 serve = "scripts.serve:main"
 download_datasets = "scripts.download_datasets:main"
 
@@ -54,7 +52,6 @@ packages = [
 include = [
     { path = "configs/*.yaml", format = "wheel" },
     { path = "configs/data/*.yaml", format = "wheel" },
-    { path = "configs/user/*.yaml", format = "wheel" },
 ]
 
 [tool.pytest]
