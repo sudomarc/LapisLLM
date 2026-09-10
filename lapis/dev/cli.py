@@ -125,6 +125,12 @@ def benchmark(
     console.print(text)
 
 
+@app.command("publish")
+def publish() -> None:
+    """Publish the newest verified checkpoint to origin/main for CHAD."""
+    _run("scripts.publish_checkpoint")
+
+
 checkpoint_app = typer.Typer(name="checkpoint", help="Checkpoint inspection and validation tools.")
 app.add_typer(checkpoint_app, name="checkpoint")
 
