@@ -87,11 +87,11 @@ Training uses next-token prediction with cross-entropy loss and supports gradien
 
 ## Models
 
-Lapis currently uses a small development configuration while the training and evaluation stack are being hardened.
+Lapis currently uses a small development configuration while the training and evaluation stack is being hardened.
 
 | Model | Status | Hidden size | Layers | Attention | Context |
 |---|---|---:|---:|---:|---:|
-| **Lapis Tiny / Small development config** | Experimental | 256 | 6 | 8 heads / 4 KV heads | 512 |
+| **Lapis Tiny** | Experimental | 256 | 6 | 8 heads / 4 KV heads | 512 |
 | Lapis 1B | Roadmap | — | — | — | — |
 | Lapis 3B | Roadmap | — | — | — | — |
 | Lapis 7B | Roadmap | — | — | — | — |
@@ -148,13 +148,14 @@ The runtime boundary is product-agnostic and centers on model loading, tokenizat
 
 ## Training
 
-For direct control, the lower-level trainer remains available:
+For direct control, the lower-level trainer remains available. The data path below assumes you have already generated the mixed corpus; a fresh checkout does not include that generated file.
 
 ```bash
+python scripts/fetch_open_corpus.py --max-chars 50000000
 python scripts/train.py \
   --config configs/tiny.yaml \
   --device cuda \
-  --data training_data/combined.txt
+  --data training_data/open/combined.txt
 ```
 
 ### CPU-fast profile
@@ -168,7 +169,7 @@ python scripts/train.py \
   --epochs 1
 ```
 
-The CPU-fast profile intentionally changes the model architecture and therefore cannot be resumed into a normal Tiny/Small checkpoint.
+The CPU-fast profile intentionally changes the model architecture and therefore cannot be resumed into a normal Tiny checkpoint.
 
 ## Evaluation and generation
 
@@ -302,7 +303,7 @@ If the PR changes after a successful run, the final commit requires fresh valida
 
 Before merge, review the final diff, identify the final commit, confirm required checks are green, and ensure no unintended artifacts or secrets are included.
 
-After merge, the main branch remains subject to regression validation. Expensive validation such as broader compatibility, extended inference, longer training smoke tests, property-based tests, fuzzing, security audits, packaging checks, and benchmark regression detection may run on schedules appropriate to their cost.
+After merge, the main branch remains subject to regression validation. The repository's current required post-merge validation is driven by push/workflow-dispatch CI; broader or more expensive checks may be added as dedicated scheduled workflows when their cost justifies continuous scheduling.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) for the repository workflow.
 
