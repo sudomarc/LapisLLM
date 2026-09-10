@@ -9,8 +9,6 @@ import sys
 import time
 from pathlib import Path
 
-import torch
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lapis.inference.runtime import LapisRuntime, SamplingConfig
@@ -34,18 +32,13 @@ def ui_enabled(no_color: bool) -> bool:
     return not no_color and sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"
 
 
-def load_chat_model(checkpoint_path: Path, device: str) -> LapisRuntime:
-    """Load a checkpoint through the shared inference runtime."""
-    return LapisRuntime.from_checkpoint(checkpoint_path, device)
-
-
 def render_header(*, runtime: LapisRuntime, color: bool) -> None:
     width = 66
+    title = "│  L A P I S"
+    status = f"  developer inference · {runtime.device} · context {runtime.model.max_position_embeddings - 1}"
     print()
     print(paint("╭" + "─" * width + "╮", ACCENT, color))
-    title = "│  L A P I S"
     print(paint(title + " " * (width + 2 - len(title)) + "│", BOLD + ACCENT, color))
-    status = f"  developer inference · {runtime.device} · context {runtime.model.max_position_embeddings - 1}"
     print(paint("│" + status + " " * max(0, width - len(status)) + "│", MUTED, color))
     print(paint("╰" + "─" * width + "╯", ACCENT, color))
     print()
@@ -54,69 +47,29 @@ def render_header(*, runtime: LapisRuntime, color: bool) -> None:
 
 
 def build_prompt(messages: list[tuple[str, str]]) -> str:
-    lines: list[str] = []
-    for role, content in messages:
-        prefix = "Input" if role == "input" else "Lapis"
-        lines.append(f"{prefix}: {content}")
+    lines = [f"{'Input' if role == 'input' else 'Lapis'}: {content}" for role, content in messages]
     lines.append("Lapis:")
     return "\n".join(lines)
 
 
 def count_context_tokens(runtime: LapisRuntime, messages: list[tuple[str, str]]) -> int:
-    return len(runtime.tokenizer.encode(build_prompt(messages), add_special_tokens=False))
-
-
-def sample_next_token(logits: torch.Tensor, config: SamplingConfig) -> torch.Tensor:
-    """Compatibility helper for the streaming developer console."""
-    config.validate()
-    logits = logits / config.temperature
-    if config.top_k > 0:
-        values, _ = torch.topk(logits, min(config.top_k, logits.size(-1)))
-        cutoff = values[..., -1, None]
-        logits = torch.where(logits < cutoff, torch.full_like(logits, float("-inf")), logits)
-    if config.top_p < 1.0:
-        sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-        probabilities = torch.softmax(sorted_logits, dim=-1)
-        cumulative = torch.cumsum(probabilities, dim=-1)
-        remove = cumulative - probabilities > config.top_p
-        sorted_logits = sorted_logits.masked_fill(remove, float("-inf"))
-        logits = torch.full_like(logits, float("-inf"))
-        logits.scatter_(dim=-1, index=sorted_indices, src=sorted_logits)
-    probabilities = torch.softmax(logits, dim=-1)
-    if not torch.isfinite(probabilities).all():
-        raise RuntimeError("Sampling produced non-finite probabilities")
-    return torch.multinomial(probabilities, num_samples=1)
+    return len(runtime.tokenize(build_prompt(messages)))
 
 
 def stream_response(runtime: LapisRuntime, prompt: str, config: SamplingConfig, color: bool) -> str:
-    token_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
-    if not token_ids:
-        token_ids = [runtime.tokenizer.bos_id]
-    ids = torch.tensor([token_ids], dtype=torch.long, device=runtime.device)
-    generated: list[int] = []
-    displayed = ""
     print(paint("Lapis", ASSISTANT, color) + paint(" › ", DIM, color), end="", flush=True)
     started = time.monotonic()
-    with torch.inference_mode():
-        for _ in range(config.max_new_tokens):
-            context = ids[:, -runtime.model.max_position_embeddings :]
-            logits, _ = runtime.model(context)
-            next_id = sample_next_token(logits[:, -1, :], config)
-            ids = torch.cat([ids, next_id], dim=1)
-            token_id = int(next_id.item())
-            if token_id == runtime.tokenizer.eos_id:
-                break
-            generated.append(token_id)
-            text = runtime.tokenizer.decode(generated, skip_special_tokens=True)
-            delta = text[len(displayed) :] if text.startswith(displayed) else text
-            if delta:
-                print(delta, end="", flush=True)
-                displayed = text
+    chunks: list[str] = []
+    for chunk in runtime.stream_generate(prompt, config):
+        print(chunk, end="", flush=True)
+        chunks.append(chunk)
     duration = time.monotonic() - started
-    tokens_per_second = len(generated) / duration if duration > 0 else 0.0
+    text = "".join(chunks)
+    token_count = len(runtime.tokenize(text))
+    rate = token_count / duration if duration > 0 else 0.0
     print()
-    print(paint(f"  {len(generated)} tokens · {tokens_per_second:.1f} tok/s", DIM, color))
-    return displayed
+    print(paint(f"  {token_count} tokens · {rate:.1f} tok/s", DIM, color))
+    return text
 
 
 def save_session(path: Path, messages: list[tuple[str, str]]) -> None:
@@ -139,7 +92,7 @@ def main() -> None:
     try:
         sampling = SamplingConfig(args.max_new_tokens, args.temperature, args.top_k, args.top_p)
         sampling.validate()
-        runtime = load_chat_model(Path(args.checkpoint), args.device)
+        runtime = LapisRuntime.from_checkpoint(Path(args.checkpoint), args.device)
     except (FileNotFoundError, KeyError, RuntimeError, ValueError, OSError, TypeError) as exc:
         print(paint(f"Unable to load checkpoint: {exc}", ERROR, not args.no_color), file=sys.stderr)
         raise SystemExit(1) from exc
@@ -180,9 +133,7 @@ def main() -> None:
             print(f"checkpoint {runtime.checkpoint}\ndevice {runtime.device}\nparameters {sum(p.numel() for p in runtime.model.parameters()):,}\nmessages {len(messages)}\ncontext {context_tokens}/{runtime.model.max_position_embeddings - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
             continue
         if command == "/context":
-            context_tokens = count_context_tokens(runtime, messages)
-            limit = runtime.model.max_position_embeddings - 1
-            print(f"Context: {context_tokens}/{limit} tokens")
+            print(f"Context: {count_context_tokens(runtime, messages)}/{runtime.model.max_position_embeddings - 1} tokens")
             continue
         if command == "/model":
             print(f"Checkpoint: {runtime.checkpoint}\nDevice: {runtime.device}\nTokenizer: {runtime.tokenizer.vocab_size:,} vocab\nContext: {runtime.model.max_position_embeddings - 1} tokens\n")
@@ -217,15 +168,15 @@ def main() -> None:
 
         messages.append(("input", user_input))
         prompt = build_prompt(messages)
-        prompt_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
+        prompt_ids = runtime.tokenize(prompt)
         context_limit = runtime.model.max_position_embeddings - 1
         while len(prompt_ids) > context_limit and len(messages) > 2:
             del messages[0:2]
             prompt = build_prompt(messages)
-            prompt_ids = runtime.tokenizer.encode(prompt, add_special_tokens=False)
+            prompt_ids = runtime.tokenize(prompt)
         print()
         response = stream_response(runtime, prompt, sampling, color)
-        generated_tokens += len(runtime.tokenizer.encode(response, add_special_tokens=False))
+        generated_tokens += len(runtime.tokenize(response))
         messages.append(("assistant", response))
         print()
 
