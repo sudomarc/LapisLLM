@@ -17,7 +17,7 @@ from lapis.config.runtime_config import configure_cpu_runtime
 from lapis.config.training_config import TrainingConfig
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-from lapis.training.learning_monitor import DEFAULT_PROMPTS, LearningMonitor
+from lapis.training.learning_monitor import LearningMonitor
 from scripts._train_impl import (
     build_scheduler,
     load_yaml,
@@ -62,16 +62,25 @@ class StreamingTextDataset(IterableDataset):
             real_length = len(buffer)
             sample_ids = buffer[: self.needed]
             if len(sample_ids) < self.needed:
-                sample_ids.extend([self.tokenizer.pad_id] * (self.needed - len(sample_ids)))
+                sample_ids.extend(
+                    [self.tokenizer.pad_id] * (self.needed - len(sample_ids))
+                )
             sample = torch.tensor(sample_ids, dtype=torch.long)
             labels = sample.clone()
             labels[min(real_length, self.needed) :] = -100
             yield sample, labels
 
 
-def _load_stream_tokenizer(config: dict, data_path: Path, resume_path: str | None, explicit_path: str | None) -> Tokenizer:
+def _load_stream_tokenizer(
+    config: dict,
+    data_path: Path,
+    resume_path: str | None,
+    explicit_path: str | None,
+) -> Tokenizer:
     tokenizer_cfg = config.get("tokenizer", {})
-    target_vocab = int(tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"]))
+    target_vocab = int(
+        tokenizer_cfg.get("vocab_size", config["model"]["vocab_size"])
+    )
     min_frequency = int(tokenizer_cfg.get("min_frequency", 1))
 
     if explicit_path:
@@ -105,7 +114,9 @@ def _load_stream_tokenizer(config: dict, data_path: Path, resume_path: str | Non
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train LAPIS from a streamed text corpus")
+    parser = argparse.ArgumentParser(
+        description="Train LAPIS from a streamed text corpus"
+    )
     parser.add_argument("--config", default="configs/local-dev.yaml")
     parser.add_argument("--resume", default=None)
     parser.add_argument("--epochs", type=int, default=1000)
@@ -131,7 +142,9 @@ def main() -> None:
     if args.monitor_sample_tokens < 1:
         raise ValueError("monitor-sample-tokens must be at least 1")
     if args.cpu_fast and args.resume:
-        raise ValueError("--cpu-fast cannot resume a checkpoint with a different model architecture")
+        raise ValueError(
+            "--cpu-fast cannot resume a checkpoint with a different model architecture"
+        )
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -140,15 +153,20 @@ def main() -> None:
     config = load_yaml(args.config)
     if args.cpu_fast:
         from lapis.config.runtime_config import apply_cpu_fast_profile, validate_fast_profile
+
         config = apply_cpu_fast_profile(config)
         validate_fast_profile(config)
         print("CPU-fast profile enabled")
 
-    tokenizer = _load_stream_tokenizer(config, data_path, args.resume, args.tokenizer)
+    tokenizer = _load_stream_tokenizer(
+        config, data_path, args.resume, args.tokenizer
+    )
     config.setdefault("model", {})["vocab_size"] = tokenizer.vocab_size
     model_config = ModelConfig(config)
     training_config = TrainingConfig(config)
-    device = resolve_device(args.device or config.get("runtime", {}).get("device", "auto"))
+    device = resolve_device(
+        args.device or config.get("runtime", {}).get("device", "auto")
+    )
     if args.cpu_fast and device.type != "cpu":
         raise ValueError("--cpu-fast requires CPU")
     if device.type == "cpu":
@@ -184,7 +202,10 @@ def main() -> None:
     print(f"Tokenizer: {tokenizer}")
     print(f"Device: {device} | dtype: {dtype}")
     print(f"Parameters: {breakdown['total']:,}")
-    print(f"Corpus: {data_path} | size={data_path.stat().st_size / 1024 / 1024:.1f} MiB | dataset=streaming")
+    print(
+        f"Corpus: {data_path} | size={data_path.stat().st_size / 1024 / 1024:.1f} MiB | "
+        "dataset=streaming"
+    )
     print(
         f"Micro-batch: {training_config.micro_batch_size} | "
         f"gradient accumulation: {training_config.gradient_accumulation_steps} | "
@@ -213,7 +234,9 @@ def main() -> None:
                 f"vocab_size={model_config.vocab_size}."
             )
         model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint.get("optimizer_state_dict", optimizer.state_dict()))
+        optimizer.load_state_dict(
+            checkpoint.get("optimizer_state_dict", optimizer.state_dict())
+        )
         if checkpoint.get("scheduler_state_dict"):
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         optimizer_step = int(checkpoint.get("step", 0))
@@ -227,7 +250,11 @@ def main() -> None:
     monitor = None
     if args.monitor_interval > 0:
         checkpoint_path = Path(args.checkpoint)
-        monitor_path = Path(args.monitor_log) if args.monitor_log else checkpoint_path.parent / "learning_monitor.jsonl"
+        monitor_path = (
+            Path(args.monitor_log)
+            if args.monitor_log
+            else checkpoint_path.parent / "learning_monitor.jsonl"
+        )
         monitor = LearningMonitor(
             model=model,
             tokenizer=tokenizer,
@@ -258,7 +285,9 @@ def main() -> None:
             accumulation_count += 1
 
             if accumulation_count == training_config.gradient_accumulation_steps:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.gradient_clip)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), training_config.gradient_clip
+                )
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
@@ -284,25 +313,56 @@ def main() -> None:
                 accumulation_count = 0
 
         if accumulation_count:
-            correction = training_config.gradient_accumulation_steps / accumulation_count
+            correction = (
+                training_config.gradient_accumulation_steps / accumulation_count
+            )
             for parameter in model.parameters():
                 if parameter.grad is not None:
                     parameter.grad.mul_(correction)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.gradient_clip)
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), training_config.gradient_clip
+            )
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
             optimizer_step += 1
+            avg_loss = running_loss / accumulation_count
+            if optimizer_step % 10 == 0 or optimizer_step == 1:
+                ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
+                print(
+                    f"step={optimizer_step:04d} loss={avg_loss:.4f} "
+                    f"ppl={ppl:.2f} lr={optimizer.param_groups[0]['lr']:.6g} "
+                    f"tokens={tokens_seen:,}",
+                    flush=True,
+                )
+            if monitor is not None:
+                monitor.observe(
+                    step=optimizer_step,
+                    epoch=epoch,
+                    loss=avg_loss,
+                    learning_rate=optimizer.param_groups[0]["lr"],
+                    tokens_seen=tokens_seen,
+                )
             running_loss = 0.0
             accumulation_count = 0
 
     if optimizer_step < training_config.max_steps:
         raise RuntimeError(
-            f"Training exhausted epochs before reaching max_steps: {optimizer_step} < {training_config.max_steps}"
+            f"Training exhausted epochs before reaching max_steps: "
+            f"{optimizer_step} < {training_config.max_steps}"
         )
 
     checkpoint_path = Path(args.checkpoint)
-    save_checkpoint(checkpoint_path, model, optimizer, scheduler, optimizer_step, epoch, config, tokenizer)
+    save_checkpoint(
+        checkpoint_path,
+        model,
+        optimizer,
+        scheduler,
+        optimizer_step,
+        epoch,
+        config,
+        tokenizer,
+    )
     print(f"Checkpoint saved: {checkpoint_path}")
     print(f"Tokenizer saved: {checkpoint_path.parent / 'tokenizer'}")
     if monitor is not None:
