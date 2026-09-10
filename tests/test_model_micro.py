@@ -1,5 +1,7 @@
 """Correctness tests for the LAPIS model core."""
 
+import warnings
+
 import torch
 
 from lapis.model.lapis_model import LapisModel
@@ -68,6 +70,14 @@ def test_model_dtype_cast_preserves_rope_behavior():
     logits, loss = model(input_ids, labels=input_ids)
     assert logits.shape == (1, 8, model.vocab_size)
     assert loss is not None and torch.isfinite(loss)
+
+
+def test_model_dtype_cast_does_not_warn_about_rope_complex_conversion():
+    model = make_model()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model.float()
+    assert not any("Casting complex values to real" in str(item.message) for item in caught)
 
 
 def test_causal_future_tokens_do_not_change_current_logits():
