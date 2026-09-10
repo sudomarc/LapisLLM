@@ -20,7 +20,8 @@ import path:
 ```
 
 The script installs the project dependencies, checks CUDA, builds the bounded
-pretraining corpus, and launches the training job with `configs/colab.yaml`.
+pretraining corpus, launches the training job with `configs/colab.yaml`, and
+publishes each verified checkpoint into the repository checkout.
 
 If an older Colab runtime already cloned the repository, refresh it before
 running training:
@@ -54,7 +55,31 @@ The entry point also supports direct execution with `python scripts/colab_train.
 
 ## Output
 
-The runner writes the corpus and provenance manifest under `training_data/` and
-the trained checkpoint under `checkpoints/`.
+The runner writes training data under `training_data/`, verified run checkpoints
+under `checkpoints/colab-runs/`, and synchronizes the newest verified model to:
 
-Do not commit generated training data, checkpoints, or tokenizer artifacts.
+```text
+checkpoints/latest.pt
+checkpoints/tokenizer/
+```
+
+The checkpoint is committed and pushed to `origin/main` together with the
+lightweight training history. Generated training data remains excluded from Git.
+
+The checkpoint publication step refuses to proceed when unrelated local source
+changes are present, so Colab cannot silently overwrite user-authored work.
+
+## Checkpoint publishing
+
+To publish the newest locally available Colab checkpoint manually:
+
+```bash
+lapis dev publish
+```
+
+The command verifies that the checkpoint is readable and contains model/config
+metadata, updates the canonical `latest.pt` and tokenizer paths, commits only
+checkpoint changes, and pushes them to `origin/main`.
+
+GitHub write authentication must be configured in the Colab runtime before the
+training workflow can push changes.
