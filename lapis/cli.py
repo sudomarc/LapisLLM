@@ -1,4 +1,4 @@
-"""Professional Lapis command-line interface."""
+"""Developer-oriented command-line interface for LapisLLM."""
 
 from __future__ import annotations
 
@@ -18,7 +18,12 @@ from rich.table import Table
 from lapis.dev.cli import app as dev_app
 from lapis.ui.training_console import can_use_tui, run_training_console
 
-app = typer.Typer(name="lapis", help="Lapis language-model platform: simple user inference with an explicit developer mode.", no_args_is_help=False, rich_markup_mode="rich")
+app = typer.Typer(
+    name="lapis",
+    help="LapisLLM language-model engine and developer/research platform.",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
 console = Console()
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,19 +49,12 @@ def _training_command(config: Path, device: str | None, data: Path | None, check
     return command
 
 
-@app.callback(invoke_without_command=True)
-def main_callback(ctx: typer.Context) -> None:
-    """Launch the end-user experience when no command is supplied."""
-    if ctx.invoked_subcommand is None and not ctx.resilient_parsing:
-        chat()
-
-
 app.add_typer(dev_app, name="dev")
 
 
 @app.command("train", hidden=True)
 def train(config: Path = typer.Option(Path("configs/local-dev.yaml"), "--config", "-c"), device: str | None = typer.Option(None, "--device"), data: Path | None = typer.Option(None, "--data"), checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), epochs: int = typer.Option(1000, "--epochs", min=1), monitor_interval: int = typer.Option(500, "--monitor-interval", min=0), no_tui: bool = typer.Option(False, "--no-tui", help="Force the legacy non-interactive renderer.")) -> None:
-    """Legacy training command. Prefer ``lapis dev train`` for new usage."""
+    """Legacy developer training command; prefer ``lapis dev train``."""
     total = _max_steps(REPO_ROOT / config)
     command = _training_command(config, device, data, checkpoint, epochs, monitor_interval)
     if not no_tui and can_use_tui():
@@ -89,25 +87,19 @@ def train(config: Path = typer.Option(Path("configs/local-dev.yaml"), "--config"
 
 @app.command("generate", hidden=True)
 def generate(prompt: str = typer.Argument(...), checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), max_new_tokens: int = typer.Option(64, "--max-new-tokens", min=1), temperature: float = typer.Option(0.8, "--temperature", min=0.01), top_k: int = typer.Option(40, "--top-k", min=0), top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0), device: str = typer.Option("auto", "--device")) -> None:
-    """Legacy direct generation command."""
+    """Legacy developer generation command; prefer ``lapis dev generate``."""
     _run([sys.executable, "-m", "scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device])
 
 
 @app.command("evaluate", hidden=True)
 def evaluate(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), device: str = typer.Option("auto", "--device")) -> None:
-    """Legacy evaluation command. Prefer ``lapis dev evaluate``."""
+    """Legacy developer evaluation command; prefer ``lapis dev evaluate``."""
     _run([sys.executable, "-m", "scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device])
-
-
-@app.command("chat")
-def chat() -> None:
-    """Start the user-facing Lapis chat interface."""
-    _run([sys.executable, "-m", "scripts.chat"])
 
 
 @app.command("serve")
 def serve() -> None:
-    """Start the Lapis API server."""
+    """Start the local Lapis runtime HTTP service for development/integration."""
     _run([sys.executable, "-m", "scripts.serve"])
 
 
