@@ -25,17 +25,21 @@ SUCCESS = "\033[38;5;114m"
 
 
 def paint(value: str, style: str, enabled: bool) -> str:
+    """Apply a terminal style when color output is enabled."""
     return f"{style}{value}{RESET}" if enabled else value
 
 
 def ui_enabled(no_color: bool) -> bool:
+    """Return whether the interactive console should emit ANSI color codes."""
     return not no_color and sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"
 
 
 def render_header(*, runtime: LapisRuntime, color: bool) -> None:
+    """Render the developer-console header from stable runtime metadata."""
+    info = runtime.get_model_info()
     width = 66
     title = "│  L A P I S"
-    status = f"  developer inference · {runtime.device} · context {runtime.model.max_position_embeddings - 1}"
+    status = f"  developer inference · {info['device']} · context {info['context_length'] - 1}"
     print()
     print(paint("╭" + "─" * width + "╮", ACCENT, color))
     print(paint(title + " " * (width + 2 - len(title)) + "│", BOLD + ACCENT, color))
@@ -47,16 +51,19 @@ def render_header(*, runtime: LapisRuntime, color: bool) -> None:
 
 
 def build_prompt(messages: list[tuple[str, str]]) -> str:
+    """Build the plain-text prompt used by the developer inference console."""
     lines = [f"{'Input' if role == 'input' else 'Lapis'}: {content}" for role, content in messages]
     lines.append("Lapis:")
     return "\n".join(lines)
 
 
 def count_context_tokens(runtime: LapisRuntime, messages: list[tuple[str, str]]) -> int:
+    """Return the number of tokens currently represented by the console prompt."""
     return len(runtime.tokenize(build_prompt(messages)))
 
 
 def stream_response(runtime: LapisRuntime, prompt: str, config: SamplingConfig, color: bool) -> str:
+    """Stream one developer inference response and report generation throughput."""
     print(paint("Lapis", ASSISTANT, color) + paint(" › ", DIM, color), end="", flush=True)
     started = time.monotonic()
     chunks: list[str] = []
@@ -73,12 +80,14 @@ def stream_response(runtime: LapisRuntime, prompt: str, config: SamplingConfig, 
 
 
 def save_session(path: Path, messages: list[tuple[str, str]]) -> None:
+    """Save the current developer session as a simple Markdown transcript."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"## {'Input' if role == 'input' else 'Lapis'}\n\n{content}\n" for role, content in messages]
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
+    """Run the interactive developer inference console."""
     parser = argparse.ArgumentParser(description="Developer inference and checkpoint-testing console")
     parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
     parser.add_argument("--device", default="auto")
@@ -98,6 +107,7 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     color = ui_enabled(args.no_color)
+    info = runtime.get_model_info()
     messages: list[tuple[str, str]] = []
     generated_tokens = 0
     session_started = time.monotonic()
@@ -129,14 +139,17 @@ def main() -> None:
             print(paint("✓ Session context reset", SUCCESS, color))
             continue
         if command == "/stats":
+            info = runtime.get_model_info()
             context_tokens = count_context_tokens(runtime, messages)
-            print(f"checkpoint {runtime.checkpoint}\ndevice {runtime.device}\nparameters {sum(p.numel() for p in runtime.model.parameters()):,}\nmessages {len(messages)}\ncontext {context_tokens}/{runtime.model.max_position_embeddings - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
+            print(f"checkpoint {info['checkpoint']}\ndevice {info['device']}\nparameters {info['parameter_count']:,}\nmessages {len(messages)}\ncontext {context_tokens}/{info['context_length'] - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
             continue
         if command == "/context":
-            print(f"Context: {count_context_tokens(runtime, messages)}/{runtime.model.max_position_embeddings - 1} tokens")
+            info = runtime.get_model_info()
+            print(f"Context: {count_context_tokens(runtime, messages)}/{info['context_length'] - 1} tokens")
             continue
         if command == "/model":
-            print(f"Checkpoint: {runtime.checkpoint}\nDevice: {runtime.device}\nTokenizer: {runtime.tokenizer.vocab_size:,} vocab\nContext: {runtime.model.max_position_embeddings - 1} tokens\n")
+            info = runtime.get_model_info()
+            print(f"Checkpoint: {info['checkpoint']}\nDevice: {info['device']}\nTokenizer: {info['vocab_size']:,} vocab\nContext: {info['context_length'] - 1} tokens\n")
             continue
         if command == "/temperature":
             if not argument:
@@ -169,7 +182,7 @@ def main() -> None:
         messages.append(("input", user_input))
         prompt = build_prompt(messages)
         prompt_ids = runtime.tokenize(prompt)
-        context_limit = runtime.model.max_position_embeddings - 1
+        context_limit = info["context_length"] - 1
         while len(prompt_ids) > context_limit and len(messages) > 2:
             del messages[0:2]
             prompt = build_prompt(messages)
