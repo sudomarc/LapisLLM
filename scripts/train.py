@@ -8,7 +8,6 @@ from pathlib import Path
 
 from scripts import _train_impl as _impl
 from scripts._train_impl import *  # noqa: F401,F403
-from scripts.streaming_train import StreamingTextDataset
 
 _PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
 
