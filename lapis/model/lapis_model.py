@@ -72,15 +72,18 @@ class LapisModel(nn.Module):
 
         PyTorch's generic Module.to()/half()/float() conversion casts buffers to
         the target parameter dtype. RoPE cis frequencies are intentionally
-        complex64, so recalculate the non-persistent buffer after the conversion
-        instead of allowing complex-to-real truncation.
+        complex64, so temporarily remove the non-persistent buffer before the
+        generic conversion and rebuild it on the resulting device.
         """
-        super()._apply(fn)
-        self.freqs_cis = precompute_freqs_cis(
-            self.hidden_size // self.num_attention_heads,
-            self.max_position_embeddings,
-            self.rope_theta,
-        ).to(device=self.embed_tokens.weight.device, dtype=torch.complex64)
+        freqs_cis = self._buffers.pop("freqs_cis", None)
+        try:
+            super()._apply(fn)
+        finally:
+            self._buffers["freqs_cis"] = precompute_freqs_cis(
+                self.hidden_size // self.num_attention_heads,
+                self.max_position_embeddings,
+                self.rope_theta,
+            ).to(device=self.embed_tokens.weight.device, dtype=torch.complex64)
         return self
 
     @staticmethod
