@@ -1,85 +1,124 @@
 #!/usr/bin/env python3
-"""Observable Colab entry point with absolute child artifact paths."""
+"""Stable, non-interactive Colab entry point for LapisLLM training."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-# Make the repository root importable when this file is executed directly
-# (e.g. ``python scripts/colab_train.py`` in Google Colab).
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import _colab_train_impl as _impl
 
-_ORIGINAL_TRAIN_ONE_RUN = _impl.train_one_run
-_ORIGINAL_POPEN = subprocess.Popen
-_PATH_FLAGS = {"--config", "--data", "--checkpoint", "--monitor-log", "--resume", "--tokenizer"}
 HISTORY = _impl.HISTORY
-# Preserve the public API used by the legacy ``colab_run`` entry point and
-# observability tests without reintroducing the wildcard import that previously
-# exposed unused/repeated names.
 METRIC_RE = _impl.METRIC_RE
 TOKEN_RE = _impl.TOKEN_RE
 format_duration = _impl.format_duration
 get_github_token = _impl.get_github_token
 
 
-def _absolute_child_paths(command: list[str]) -> list[str]:
-    normalized = list(command)
-    for index, value in enumerate(normalized[:-1]):
-        if value in _PATH_FLAGS:
-            normalized[index + 1] = str(Path(normalized[index + 1]).resolve())
-    return normalized
-
-
 def completed_run_numbers() -> set[int]:
-    """Return completed runs while preserving legacy summaries without status."""
-    original_history = _impl.HISTORY
+    original = _impl.HISTORY
     _impl.HISTORY = HISTORY
     try:
         return _impl.completed_run_numbers()
     finally:
-        _impl.HISTORY = original_history
+        _impl.HISTORY = original
 
 
 def _stage_latest_checkpoint() -> None:
-    """Copy the newest verified Colab checkpoint into the canonical user path."""
-    publish = [sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"]
-    subprocess.run(publish, cwd=ROOT, check=True)
+    subprocess.run(
+        [sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"],
+        cwd=ROOT,
+        check=True,
+    )
 
 
 def train_one_run(run_number: int, total_runs: int, args, device: str, config: Path) -> dict:
-    """Run the canonical trainer while forcing paths and publishing its checkpoint."""
+    """Run the real trainer directly instead of the broken Typer module invocation."""
+    run_dir = _impl.CHECKPOINTS / f"run-{run_number:03d}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = run_dir / "checkpoint.pt"
+    monitor_log = run_dir / "learning_monitor.jsonl"
+    steps = _impl.target_steps(config)
+    _impl.phase("RUN", f"{run_number} / {total_runs}")
+    _impl.phase("RUN", f"target_steps={steps:,} | checkpoint={checkpoint}")
+    _impl.phase("TOKENIZER", "STARTING | trainer will reuse a compatible on-disk tokenizer when available")
+    _impl.phase("DATASET", "STARTING | corpus -> token IDs -> fixed-length samples")
+    _impl.phase("MODEL", "STARTING | initialization and device placement occur inside scripts.train")
+    _impl.phase("TRAINING", "START")
 
-    def popen(command, *popen_args, **popen_kwargs):
-        return _ORIGINAL_POPEN(
-            _absolute_child_paths(list(command)), *popen_args, **popen_kwargs
-        )
+    command = [
+        sys.executable,
+        "-m",
+        "scripts.train",
+        "--config", str(config.relative_to(ROOT)),
+        "--data", str(_impl.CORPUS.relative_to(ROOT)),
+        "--checkpoint", str(checkpoint.relative_to(ROOT)),
+        "--device", device,
+        "--epochs", "1000",
+        "--monitor-interval", str(args.monitor_interval),
+        "--monitor-sample-tokens", str(args.monitor_sample_tokens),
+        "--monitor-log", str(monitor_log.relative_to(ROOT)),
+    ]
+    if args.monitor_prompts:
+        command += ["--monitor-prompts", args.monitor_prompts]
 
-    _impl.subprocess.Popen = popen
+    started = time.monotonic()
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
     try:
-        result = _ORIGINAL_TRAIN_ONE_RUN(run_number, total_runs, args, device, config)
+        metrics = _impl.monitor_child(
+            process,
+            run_number=run_number,
+            total_runs=total_runs,
+            target_steps=steps,
+            started=started,
+            heartbeat_seconds=args.heartbeat_seconds,
+        )
+        metrics["device"] = device
+        _impl.phase("TRAINING", f"COMPLETE | run={run_number}/{total_runs} | elapsed={format_duration(time.monotonic() - started)}")
+        _impl.verify_checkpoint(checkpoint, steps)
+        prompts = tuple(
+            item.strip()
+            for item in (
+                args.monitor_prompts
+                or "Explain a transformer.||Write a Python function to reverse a string.||Explique les réseaux de neurones."
+            ).split("||")
+            if item.strip()
+        )
+        samples = _impl.generate_preview(checkpoint, device, prompts)
+        _impl.write_history(run_number, total_runs, checkpoint, metrics, samples, started, config)
         _stage_latest_checkpoint()
-        return result
-    finally:
-        _impl.subprocess.Popen = _ORIGINAL_POPEN
+        return metrics
+    except Exception as exc:
+        _impl.write_failure_history(run_number, total_runs, exc, started)
+        _impl.phase("RUN", f"FAILED | run={run_number}/{total_runs} | error={exc}")
+        raise
 
 
 def main() -> int:
-    """Run Colab training non-interactively with one run by default."""
+    """Run Colab training with one non-interactive run by default."""
     if len(sys.argv) == 1:
         sys.argv.append("--runs")
         sys.argv.append("1")
     elif "--runs" not in sys.argv:
         sys.argv.extend(["--runs", "1"])
+    _impl.train_one_run = train_one_run
     return _impl.main()
-
-
-_impl.train_one_run = train_one_run
 
 
 if __name__ == "__main__":
