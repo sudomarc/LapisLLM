@@ -1,3 +1,5 @@
+import ast
+import json
 from pathlib import Path
 
 import torch
@@ -156,13 +158,13 @@ def test_publish_verification_rejects_missing_model_state(tmp_path):
 def test_git_push_requires_token_before_modifying_repository(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        colab,
+        colab_train,
         "phase",
         lambda _name, message: calls.append(message),
     )
 
     try:
-        colab.git_push(None, False)
+        colab_train.git_push(None, False)
     except RuntimeError as exc:
         assert "No GitHub credentials" in str(exc)
     else:
