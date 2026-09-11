@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
 from typing import Any
+
+# FineWeb-Edu currently uses Hugging Face Hub/Xet-backed Parquet shards. Keep the
+# Colab corpus path on the standard Hub HTTP transport unless the caller already
+# selected another setting. This also has to happen before importing datasets.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 from datasets import load_dataset
 
@@ -25,6 +31,8 @@ DEFAULT_SOURCES = (
 
 PROGRESS_EVERY_RECORDS = 250
 PROGRESS_EVERY_SECONDS = 5.0
+SOURCE_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 2.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,40 +96,56 @@ def print_progress(
     )
 
 
-def main() -> int:
-    args = parse_args()
-    output = Path(args.output)
-    manifest_path = Path(args.manifest)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-
-    total_chars = 0
-    source_stats = []
-    seen_sources = []
-    started = time.monotonic()
-
-    print(
-        f"[CORPUS] Starting | target={format_size(args.max_chars)} | "
-        f"sources={', '.join(item[0] for item in selected_sources(args))}",
-        flush=True,
-    )
-
-    with output.open("w", encoding="utf-8", newline="\n") as handle:
-        for source_id, dataset_id, config, split, field in selected_sources(args):
-            if total_chars >= args.max_chars:
-                break
-
-            source_started = time.monotonic()
+def load_source(source_id: str, dataset_id: str, config: str | None, split: str):
+    """Open one streaming source with a bounded retry budget."""
+    last_error: Exception | None = None
+    for attempt in range(1, SOURCE_RETRIES + 1):
+        try:
+            if attempt > 1:
+                delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 2))
+                print(
+                    f"[CORPUS] RETRY | source={source_id} | attempt={attempt}/{SOURCE_RETRIES} | "
+                    f"sleep={delay:.1f}s",
+                    flush=True,
+                )
+                time.sleep(delay)
+            return load_dataset(**load_kwargs(dataset_id, config, split))
+        except Exception as exc:
+            last_error = exc
             print(
-                f"[CORPUS] Loading source: {source_id} "
-                f"({dataset_id}, config={config or 'default'}, split={split})",
+                f"[CORPUS] SOURCE OPEN FAILED | source={source_id} | "
+                f"attempt={attempt}/{SOURCE_RETRIES} | error={exc}",
                 flush=True,
             )
-            dataset = load_dataset(**load_kwargs(dataset_id, config, split))
-            records = 0
-            chars = 0
-            last_progress = source_started
+    assert last_error is not None
+    raise last_error
 
+
+def write_source(
+    handle,
+    *,
+    source_id: str,
+    dataset_id: str,
+    config: str | None,
+    split: str,
+    field: str,
+    total_chars: int,
+    max_chars: int,
+    max_records_per_source: int,
+    started: float,
+) -> tuple[int, int, int]:
+    """Write one source, retrying the whole source without duplicating output."""
+    source_start = handle.tell()
+    last_error: Exception | None = None
+
+    for attempt in range(1, SOURCE_RETRIES + 1):
+        handle.seek(source_start)
+        handle.truncate()
+        dataset = load_source(source_id, dataset_id, config, split)
+        records = 0
+        chars = 0
+        last_progress = time.monotonic()
+        try:
             for row in dataset:
                 value = row.get(field) if isinstance(row, dict) else None
                 if not isinstance(value, str):
@@ -129,7 +153,7 @@ def main() -> int:
                 text = clean_text(value)
                 if not text:
                     continue
-                remaining = args.max_chars - total_chars
+                remaining = max_chars - total_chars
                 if remaining <= 0:
                     break
                 block = f"\n\n===== {source_id} =====\n\n{text}\n"
@@ -151,13 +175,93 @@ def main() -> int:
                         source_records=records,
                         source_chars=chars,
                         total_chars=total_chars,
-                        max_chars=args.max_chars,
+                        max_chars=max_chars,
                         started=started,
                     )
                     last_progress = now
 
-                if args.max_records_per_source and records >= args.max_records_per_source:
+                if max_records_per_source and records >= max_records_per_source:
                     break
+
+            return records, chars, total_chars
+        except Exception as exc:
+            last_error = exc
+            print(
+                f"[CORPUS] SOURCE FAILED | source={source_id} | "
+                f"attempt={attempt}/{SOURCE_RETRIES} | error={exc}",
+                flush=True,
+            )
+            # Drop any partial source output before retrying from the source start.
+            handle.seek(source_start)
+            handle.truncate()
+            total_chars -= chars
+            if attempt < SOURCE_RETRIES:
+                delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                print(f"[CORPUS] RETRYING SOURCE | source={source_id} | sleep={delay:.1f}s", flush=True)
+                time.sleep(delay)
+            else:
+                raise
+
+    assert last_error is not None
+    raise last_error
+
+
+def main() -> int:
+    args = parse_args()
+    if args.max_chars < 1:
+        raise SystemExit("--max-chars must be >= 1")
+    if args.max_records_per_source < 0:
+        raise SystemExit("--max-records-per-source must be >= 0")
+
+    output = Path(args.output)
+    manifest_path = Path(args.manifest)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    total_chars = 0
+    source_stats = []
+    seen_sources = []
+    source_errors = []
+    started = time.monotonic()
+
+    print(
+        f"[CORPUS] Starting | target={format_size(args.max_chars)} | "
+        f"sources={', '.join(item[0] for item in selected_sources(args))} | "
+        f"xet={'disabled' if os.environ.get('HF_HUB_DISABLE_XET', '').lower() in {'1', 'true', 'yes', 'on'} else 'enabled'}",
+        flush=True,
+    )
+
+    with output.open("w", encoding="utf-8", newline="\n") as handle:
+        for source_id, dataset_id, config, split, field in selected_sources(args):
+            if total_chars >= args.max_chars:
+                break
+
+            source_started = time.monotonic()
+            print(
+                f"[CORPUS] Loading source: {source_id} "
+                f"({dataset_id}, config={config or 'default'}, split={split})",
+                flush=True,
+            )
+            try:
+                records, chars, total_chars = write_source(
+                    handle,
+                    source_id=source_id,
+                    dataset_id=dataset_id,
+                    config=config,
+                    split=split,
+                    field=field,
+                    total_chars=total_chars,
+                    max_chars=args.max_chars,
+                    max_records_per_source=args.max_records_per_source,
+                    started=started,
+                )
+            except Exception as exc:
+                source_errors.append({"id": source_id, "dataset": dataset_id, "error": str(exc)})
+                print(
+                    f"[CORPUS] SOURCE SKIPPED | source={source_id} | error={exc}",
+                    flush=True,
+                )
+                continue
 
             source_stats.append(
                 {
@@ -168,6 +272,7 @@ def main() -> int:
                     "field": field,
                     "records_written": records,
                     "chars_written": chars,
+                    "elapsed_seconds": time.monotonic() - source_started,
                 }
             )
             seen_sources.append(source_id)
@@ -189,6 +294,8 @@ def main() -> int:
         "actual_chars": total_chars,
         "sources": source_stats,
         "source_order": seen_sources,
+        "source_errors": source_errors,
+        "hf_hub_disable_xet": os.environ.get("HF_HUB_DISABLE_XET", ""),
         "output": str(output),
     }
     manifest_path.write_text(
@@ -202,6 +309,10 @@ def main() -> int:
         flush=True,
     )
     print(f"Manifest: {manifest_path}", flush=True)
+    if source_errors:
+        print(f"[CORPUS] WARNINGS | skipped_sources={len(source_errors)}", flush=True)
+    if total_chars <= 0:
+        raise RuntimeError("Corpus builder produced no training data.")
     return 0
 
 
