@@ -65,7 +65,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--heartbeat-seconds", type=float, default=HEARTBEAT_SECONDS)
     parser.add_argument("--no-push", action="store_true", help="Do not push history/checkpoint outputs")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
-    return parser.parse_args(argv)
+    return parser.parse_args(argv if argv is not None else [])
 
 
 def get_github_token() -> str | None:
@@ -184,7 +184,7 @@ def completed_run_numbers() -> set[int]:
         try:
             data = json.loads(summary.read_text(encoding="utf-8"))
             number = int(data["run_number"])
-            if data.get("status") == "completed":
+            if data.get("status", "completed") == "completed":
                 numbers.add(number)
         except (OSError, ValueError, KeyError, json.JSONDecodeError, TypeError):
             continue
