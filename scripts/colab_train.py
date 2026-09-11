@@ -27,12 +27,16 @@ TOKEN_RE = _impl.TOKEN_RE
 format_duration = _impl.format_duration
 corpus_valid = _impl.corpus_valid
 prepare_corpus = _impl.prepare_corpus
-parse_args = _impl.parse_args
 banner = _impl.banner
 phase = _impl.phase
 ensure_dependencies = _impl.ensure_dependencies
 check_gpu = _impl.check_gpu
 train_one_run = _impl.train_one_run
+
+
+def parse_args(argv: list[str] | None = None):
+    """Parse wrapper arguments without inheriting unrelated host-process args."""
+    return _impl.parse_args([] if argv is None else argv)
 
 
 def get_github_token() -> str | None:
@@ -58,10 +62,10 @@ def completed_run_numbers() -> set[int]:
 def git_push(token: str | None, smoke: bool) -> bool:
     """Publish history and canonical inference outputs without staging run checkpoints."""
     if smoke:
-        phase("GITHUB", "SKIPPED | smoke test")
+        _impl.phase("GITHUB", "SKIPPED | smoke test")
         return True
     if not token:
-        phase("GITHUB", "AUTHENTICATION MISSING | failing before modifying Git state")
+        _impl.phase("GITHUB", "AUTHENTICATION MISSING | failing before modifying Git state")
         raise RuntimeError("No GitHub credentials available for non-interactive Colab push.")
 
     result = subprocess.run(
@@ -98,7 +102,7 @@ def git_push(token: str | None, smoke: bool) -> bool:
         )
 
     if pushable:
-        phase("GITHUB", f"COMMIT | files={len(pushable)}")
+        _impl.phase("GITHUB", f"COMMIT | files={len(pushable)}")
         subprocess.run(
             [
                 "git",
@@ -148,7 +152,7 @@ def git_push(token: str | None, smoke: bool) -> bool:
             timeout=120,
         )
 
-    phase("GITHUB", "PUSH COMPLETE")
+    _impl.phase("GITHUB", "PUSH COMPLETE")
     return True
 
 
