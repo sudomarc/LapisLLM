@@ -621,6 +621,17 @@ def git_push(token: str | None, smoke: bool) -> bool:
                 timeout=120,
             )
     else:
+        credential_helper = subprocess.run(
+            ["git", "config", "--get", "credential.helper"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        ).stdout.strip()
+        if not credential_helper:
+            phase("GITHUB", "AUTHENTICATION MISSING | failing before modifying Git state")
+            raise RuntimeError("No GitHub credentials available for non-interactive Colab push.")
         phase("GITHUB", "NO TOKEN | attempting existing non-interactive Git credentials")
         subprocess.run(
             ["git", "push", "origin", "main"],
