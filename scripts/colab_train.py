@@ -26,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "colab.yaml"
+SMOKE_CONFIG = ROOT / "configs" / "local-dev.yaml"
 CORPUS = ROOT / "training_data" / "colab_pretrain.txt"
 MANIFEST = ROOT / "training_data" / "colab_pretrain_manifest.json"
 HISTORY = ROOT / "training_history"
@@ -158,14 +159,14 @@ def resolve_device(requested: str) -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def target_steps() -> int:
-    """Read and validate the configured training step budget."""
+def target_steps(config: Path = CONFIG) -> int:
+    """Read and validate the training step budget from the selected config."""
     import yaml
 
-    data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
     steps = int(data["training"]["max_steps"])
     if steps < 1:
-        raise ValueError("configs/colab.yaml training.max_steps must be >= 1")
+        raise ValueError(f"{config} training.max_steps must be >= 1")
     return steps
 
 
@@ -522,6 +523,7 @@ def run_one(
     run_number: int,
     runs: int,
     device: str,
+    config: Path,
     max_chars: int,
     max_records_per_source: int,
     monitor_interval: int,
@@ -530,7 +532,7 @@ def run_one(
     """Execute, verify, preview, publish, and record one training run."""
     started = time.monotonic()
     prepare_corpus(max_chars, max_records_per_source, smoke_test=smoke_test)
-    steps = target_steps()
+    steps = target_steps(config)
     run_dir = CHECKPOINTS / f"run-{run_number:03d}"
     run_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = run_dir / "checkpoint.pt"
@@ -540,7 +542,7 @@ def run_one(
         "-m",
         "scripts.train",
         "--config",
-        str(CONFIG.relative_to(ROOT)),
+        str(config.relative_to(ROOT)),
         "--data",
         str(CORPUS.relative_to(ROOT)),
         "--checkpoint",
@@ -556,6 +558,10 @@ def run_one(
     metrics["device"] = device
     verify_checkpoint(checkpoint, steps)
     samples = preview(checkpoint, device)
+    if smoke_test:
+        write_history(run_number, runs, checkpoint, metrics, samples, started, device)
+        phase("PUBLISH", "SKIPPED | smoke test")
+        return
     token = get_github_token()
     publish_checkpoint(token)
     write_history(run_number, runs, checkpoint, metrics, samples, started, device)
@@ -618,12 +624,14 @@ def main() -> int:
     done = completed_runs() if args.resume else set()
     remaining = [number for number in range(1, args.runs + 1) if number not in done]
     phase("PLAN", f"requested={args.runs} | completed={len(done)} | remaining={len(remaining)}")
+    config = SMOKE_CONFIG if args.smoke_test else CONFIG
 
     for run_number in remaining:
         run_one(
             run_number=run_number,
             runs=args.runs,
             device=device,
+            config=config,
             max_chars=args.max_chars,
             max_records_per_source=args.max_records_per_source,
             monitor_interval=args.monitor_interval,
