@@ -153,10 +153,7 @@ def prepare_corpus(args: argparse.Namespace) -> None:
     phase("CORPUS", "START")
     effective_max_chars = 50_000 if args.smoke_test else args.max_chars
     if corpus_valid(effective_max_chars):
-        try:
-            manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            manifest = {}
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         size = CORPUS.stat().st_size
         phase(
             "CORPUS",
@@ -199,22 +196,8 @@ def completed_run_numbers() -> set[int]:
     return numbers
 
 
-def monitor_child(
-    process: subprocess.Popen[str],
-    *,
-    run_number: int,
-    total_runs: int,
-    target_steps: int,
-    started: float,
-    heartbeat_seconds: float,
-) -> dict[str, float]:
-    latest: dict[str, float] = {
-        "step": 0,
-        "loss": float("nan"),
-        "ppl": float("nan"),
-        "lr": float("nan"),
-        "tokens": 0,
-    }
+def monitor_child(process: subprocess.Popen[str], *, run_number: int, total_runs: int, target_steps: int, started: float, heartbeat_seconds: float) -> dict[str, float]:
+    latest: dict[str, float] = {"step": 0, "loss": float("nan"), "ppl": float("nan"), "lr": float("nan"), "tokens": 0}
     last_output = time.monotonic()
     stop = threading.Event()
 
@@ -229,12 +212,7 @@ def monitor_child(
             speed = step / elapsed if elapsed > 0 else 0.0
             remaining = max(0, target_steps - step)
             eta = remaining / speed if speed > 0 else None
-            phase(
-                "TRAINING",
-                f"HEARTBEAT | run={run_number}/{total_runs} | child active | "
-                f"step={step:,}/{target_steps:,} | elapsed={format_duration(elapsed)}"
-                + (f" | ETA={format_duration(eta)}" if eta is not None else ""),
-            )
+            phase("TRAINING", f"HEARTBEAT | run={run_number}/{total_runs} | child active | step={step:,}/{target_steps:,} | elapsed={format_duration(elapsed)}" + (f" | ETA={format_duration(eta)}" if eta is not None else ""))
             last_output = now
 
     thread = threading.Thread(target=heartbeat, daemon=True)
@@ -262,14 +240,7 @@ def monitor_child(
                 eta = remaining / speed if speed > 0 else None
                 tokens = int(latest["tokens"])
                 token_speed = tokens / elapsed if tokens else 0.0
-                phase(
-                    "TRAINING",
-                    f"run={run_number}/{total_runs} | step={int(latest['step']):,}/{target_steps:,} | "
-                    f"progress={latest['step'] / target_steps * 100:.2f}% | loss={latest['loss']:.4f} | "
-                    f"ppl={latest['ppl']:.2f} | lr={latest['lr']:.6g} | tokens={tokens:,} | "
-                    f"tok/s={token_speed:,.0f}"
-                    + (f" | ETA={format_duration(eta)}" if eta is not None else ""),
-                )
+                phase("TRAINING", f"run={run_number}/{total_runs} | step={int(latest['step']):,}/{target_steps:,} | progress={latest['step'] / target_steps * 100:.2f}% | loss={latest['loss']:.4f} | ppl={latest['ppl']:.2f} | lr={latest['lr']:.6g} | tokens={tokens:,} | tok/s={token_speed:,.0f}" + (f" | ETA={format_duration(eta)}" if eta is not None else ""))
             if "Checkpoint saved:" in line:
                 phase("CHECKPOINT", "SAVED | trainer reported checkpoint write complete")
     finally:
@@ -278,16 +249,12 @@ def monitor_child(
         process.stdout.close()
     code = process.wait()
     if code != 0:
-        raise RuntimeError(
-            f"[TRAINING] ERROR | run={run_number}/{total_runs} | exit_code={code} | "
-            f"last_step={int(latest['step'])}"
-        )
+        raise RuntimeError(f"[TRAINING] ERROR | run={run_number}/{total_runs} | exit_code={code} | last_step={int(latest['step'])}")
     return latest
 
 
 def target_steps(config: Path) -> int:
     import yaml
-
     data = yaml.safe_load(config.read_text(encoding="utf-8"))
     steps = int(data["training"]["max_steps"])
     if steps < 1:
@@ -299,18 +266,8 @@ def write_failure_history(run_number: int, total_runs: int, error: Exception, st
     run_id = f"run-{run_number:03d}"
     run_dir = HISTORY / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    summary = {
-        "run_id": run_id,
-        "run_number": run_number,
-        "total_runs": total_runs,
-        "status": "failed",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "duration_seconds": time.monotonic() - started,
-        "error": str(error),
-    }
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
-    )
+    summary = {"run_id": run_id, "run_number": run_number, "total_runs": total_runs, "status": "failed", "timestamp_utc": datetime.now(timezone.utc).isoformat(), "duration_seconds": time.monotonic() - started, "error": str(error)}
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     (run_dir / "error.log").write_text(str(error) + "\n", encoding="utf-8")
 
 
@@ -319,7 +276,6 @@ def verify_checkpoint(checkpoint: Path, expected_steps: int) -> None:
     if not checkpoint.is_file() or checkpoint.stat().st_size <= 0:
         raise RuntimeError(f"Checkpoint missing or empty: {checkpoint}")
     import torch
-
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     step = int(state.get("step", -1))
     if step != expected_steps:
@@ -331,38 +287,15 @@ def verify_checkpoint(checkpoint: Path, expected_steps: int) -> None:
         raise RuntimeError(f"Checkpoint tokenizer missing or empty: {tokenizer}")
     if state.get("tokenizer_version") is None:
         raise RuntimeError("Checkpoint tokenizer metadata missing")
-    phase(
-        "CHECKPOINT",
-        f"VERIFIED | size={checkpoint.stat().st_size / 1024 / 1024:.1f} MiB | "
-        f"step={step:,} | tokenizer=OK",
-    )
+    phase("CHECKPOINT", f"VERIFIED | size={checkpoint.stat().st_size / 1024 / 1024:.1f} MiB | step={step:,} | tokenizer=OK")
 
 
 def generate_preview(checkpoint: Path, device: str, prompts: tuple[str, ...]) -> list[dict[str, str]]:
     phase("CHATBOT PREVIEW", "START")
     samples: list[dict[str, str]] = []
     for prompt in prompts:
-        command = [
-            sys.executable,
-            "scripts/generate.py",
-            "--checkpoint",
-            str(checkpoint.relative_to(ROOT)),
-            "--prompt",
-            prompt,
-            "--max-new-tokens",
-            "32",
-            "--device",
-            device,
-        ]
-        result = subprocess.run(
-            command,
-            cwd=ROOT,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=120,
-        )
+        command = [sys.executable, "scripts/generate.py", "--checkpoint", str(checkpoint.relative_to(ROOT)), "--prompt", prompt, "--max-new-tokens", "32", "--device", device]
+        result = subprocess.run(command, cwd=ROOT, env={**os.environ, "PYTHONUNBUFFERED": "1"}, text=True, capture_output=True, check=True, timeout=120)
         completion = result.stdout.strip()
         print(f"\nPrompt: {prompt}\nLapisLLM: {completion or '<EMPTY>'}", flush=True)
         samples.append({"prompt": prompt, "completion": completion})
@@ -370,74 +303,20 @@ def generate_preview(checkpoint: Path, device: str, prompts: tuple[str, ...]) ->
     return samples
 
 
-def write_history(
-    run_number: int,
-    total_runs: int,
-    checkpoint: Path,
-    metrics: dict[str, float],
-    samples: list[dict[str, str]],
-    started: float,
-    config: Path,
-) -> Path:
+def write_history(run_number: int, total_runs: int, checkpoint: Path, metrics: dict[str, float], samples: list[dict[str, str]], started: float, config: Path) -> Path:
     run_id = f"run-{run_number:03d}"
     run_dir = HISTORY / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     duration = time.monotonic() - started
-    summary = {
-        "run_id": run_id,
-        "run_number": run_number,
-        "total_runs": total_runs,
-        "status": "completed",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "steps": int(metrics.get("step", 0)),
-        "loss": metrics.get("loss"),
-        "perplexity": metrics.get("ppl"),
-        "learning_rate": metrics.get("lr"),
-        "tokens_seen": int(metrics.get("tokens", 0)),
-        "duration_seconds": duration,
-        "device": metrics.get("device", "unknown"),
-        "checkpoint_path": str(checkpoint),
-        "checkpoint_size_bytes": checkpoint.stat().st_size,
-        "config": str(config),
-        "dataset_manifest": str(MANIFEST),
-        "samples": samples,
-    }
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "metadata.json").write_text(
-        json.dumps(
-            {"run_id": run_id, "checkpoint": str(checkpoint), "manifest": str(MANIFEST)},
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "samples.md").write_text(
-        "\n".join(
-            [
-                f"# {run_id}",
-                "",
-                *[
-                    f"## {item['prompt']}\n\n{item['completion'] or '<EMPTY>'}\n"
-                    for item in samples
-                ],
-            ]
-        ),
-        encoding="utf-8",
-    )
+    summary = {"run_id": run_id, "run_number": run_number, "total_runs": total_runs, "status": "completed", "timestamp_utc": datetime.now(timezone.utc).isoformat(), "steps": int(metrics.get("step", 0)), "loss": metrics.get("loss"), "perplexity": metrics.get("ppl"), "learning_rate": metrics.get("lr"), "tokens_seen": int(metrics.get("tokens", 0)), "duration_seconds": duration, "device": metrics.get("device", "unknown"), "checkpoint_path": str(checkpoint), "checkpoint_size_bytes": checkpoint.stat().st_size, "config": str(config), "dataset_manifest": str(MANIFEST), "samples": samples}
+    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (run_dir / "metadata.json").write_text(json.dumps({"run_id": run_id, "checkpoint": str(checkpoint), "manifest": str(MANIFEST)}, indent=2) + "\n", encoding="utf-8")
+    (run_dir / "samples.md").write_text("\n".join([f"# {run_id}", "", *[f"## {item['prompt']}\n\n{item['completion'] or '<EMPTY>'}\n" for item in samples]]), encoding="utf-8")
     phase("HISTORY", f"COMPLETE | {run_dir}")
     return run_dir
 
 
-def train_one_run(
-    run_number: int,
-    total_runs: int,
-    args: argparse.Namespace,
-    device: str,
-    config: Path,
-) -> dict[str, float]:
+def train_one_run(run_number: int, total_runs: int, args: argparse.Namespace, device: str, config: Path) -> dict[str, float]:
     run_dir = CHECKPOINTS / f"run-{run_number:03d}"
     run_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = run_dir / "checkpoint.pt"
@@ -446,65 +325,17 @@ def train_one_run(
     phase("RUN", f"{run_number} / {total_runs}")
     phase("RUN", f"target_steps={steps:,} | checkpoint={checkpoint}")
     phase("TRAINING", "START | generation monitor is disabled by default")
-
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.train",
-        "--config",
-        str(config.relative_to(ROOT)),
-        "--data",
-        str(CORPUS.relative_to(ROOT)),
-        "--checkpoint",
-        str(checkpoint.relative_to(ROOT)),
-        "--device",
-        device,
-        "--epochs",
-        "1000",
-        "--monitor-interval",
-        str(args.monitor_interval),
-        "--monitor-sample-tokens",
-        str(args.monitor_sample_tokens),
-        "--monitor-log",
-        str(monitor_log.relative_to(ROOT)),
-    ]
+    command = [sys.executable, "-m", "scripts.train", "--config", str(config.relative_to(ROOT)), "--data", str(CORPUS.relative_to(ROOT)), "--checkpoint", str(checkpoint.relative_to(ROOT)), "--device", device, "--epochs", "1000", "--monitor-interval", str(args.monitor_interval), "--monitor-sample-tokens", str(args.monitor_sample_tokens), "--monitor-log", str(monitor_log.relative_to(ROOT))]
     if args.monitor_prompts:
         command += ["--monitor-prompts", args.monitor_prompts]
-
     started = time.monotonic()
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-    )
+    process = subprocess.Popen(command, cwd=ROOT, env={**os.environ, "PYTHONUNBUFFERED": "1"}, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
     try:
-        metrics = monitor_child(
-            process,
-            run_number=run_number,
-            total_runs=total_runs,
-            target_steps=steps,
-            started=started,
-            heartbeat_seconds=args.heartbeat_seconds,
-        )
+        metrics = monitor_child(process, run_number=run_number, total_runs=total_runs, target_steps=steps, started=started, heartbeat_seconds=args.heartbeat_seconds)
         metrics["device"] = device
-        phase(
-            "TRAINING",
-            f"COMPLETE | run={run_number}/{total_runs} | elapsed={format_duration(time.monotonic() - started)}",
-        )
+        phase("TRAINING", f"COMPLETE | run={run_number}/{total_runs} | elapsed={format_duration(time.monotonic() - started)}")
         verify_checkpoint(checkpoint, steps)
-        prompts = tuple(
-            item.strip()
-            for item in (
-                args.monitor_prompts
-                or "Explain a transformer.||Write a Python function to reverse a string.||Explique les réseaux de neurones."
-            ).split("||")
-            if item.strip()
-        )
+        prompts = tuple(item.strip() for item in (args.monitor_prompts or "Explain a transformer.||Write a Python function to reverse a string.||Explique les réseaux de neurones.").split("||") if item.strip())
         samples = generate_preview(checkpoint, device, prompts)
         write_history(run_number, total_runs, checkpoint, metrics, samples, started, config)
         publish_checkpoint_locally(checkpoint)
@@ -517,132 +348,53 @@ def train_one_run(
 
 def publish_checkpoint_locally(checkpoint: Path) -> None:
     phase("PUBLISH", "CHECKPOINT | preparing canonical latest.pt")
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.publish_checkpoint",
-        str(checkpoint.relative_to(ROOT)),
-        "--no-push",
-    ]
-    run_command(command)
+    run_command([sys.executable, "-m", "scripts.publish_checkpoint", str(checkpoint.relative_to(ROOT)), "--no-push"])
     phase("PUBLISH", "CHECKPOINT | canonical paths updated")
 
 
 def git_push(token: str | None, smoke: bool) -> bool:
+    """Publish only canonical training outputs using non-interactive Git auth.
+
+    Authentication is probed before any local staging/commit so missing or
+    unusable credentials cannot mutate the local Git state.
+    """
     if smoke:
         phase("GITHUB", "SKIPPED | smoke test")
         return True
-
-    status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-        timeout=30,
-    ).stdout.splitlines()
-    protected = [
-        line
-        for line in status
-        if line[3:].lstrip().replace("\\", "/")
-        and not (
-            line[3:].lstrip().replace("\\", "/").startswith("training_history/")
-            or line[3:].lstrip().replace("\\", "/").startswith("checkpoints/")
-        )
-    ]
-    if protected:
-        raise RuntimeError(
-            "Refusing GitHub push because unrelated local changes exist:\n"
-            + "\n".join(protected)
-        )
-
-    canonical = (
-        "training_history/",
-        "checkpoints/latest.pt",
-        "checkpoints/tokenizer/",
-    )
-    pushable = [
-        line[3:].lstrip().replace("\\", "/")
-        for line in status
-        if line[3:].lstrip().replace("\\", "/").startswith(canonical)
-    ]
-    if pushable:
-        phase("GITHUB", f"COMMIT | files={len(pushable)}")
-        subprocess.run(
-            [
-                "git",
-                "add",
-                "training_history",
-                "checkpoints/latest.pt",
-                "checkpoints/tokenizer",
-            ],
-            cwd=ROOT,
-            check=True,
-            timeout=30,
-        )
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=30,
-        ).stdout.strip()
-        if staged:
-            subprocess.run(
-                ["git", "commit", "-m", "chore: record Colab training outputs"],
-                cwd=ROOT,
-                check=True,
-                timeout=60,
-            )
-
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "PYTHONUNBUFFERED": "1"}
+    temp_dir = None
     if token:
         import stat
         import tempfile
-
-        with tempfile.TemporaryDirectory(prefix="lapis-git-auth-") as tmp:
-            askpass = Path(tmp) / "askpass.sh"
-            askpass.write_text(
-                "#!/bin/sh\n"
-                "case \"$1\" in\n"
-                "  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;\n"
-                "  *) printf '%s\\n' \"$LAPIS_GIT_TOKEN\" ;;\n"
-                "esac\n",
-                encoding="utf-8",
-            )
-            askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-            env.update({"GIT_ASKPASS": str(askpass), "LAPIS_GIT_TOKEN": token})
-            subprocess.run(
-                ["git", "push", "origin", "main"],
-                cwd=ROOT,
-                env=env,
-                check=True,
-                timeout=120,
-            )
-    else:
-        credential_helper = subprocess.run(
-            ["git", "config", "--get", "credential.helper"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=30,
-        ).stdout.strip()
-        if not credential_helper:
-            phase("GITHUB", "AUTHENTICATION MISSING | failing before modifying Git state")
-            raise RuntimeError("No GitHub credentials available for non-interactive Colab push.")
-        phase("GITHUB", "NO TOKEN | attempting existing non-interactive Git credentials")
-        subprocess.run(
-            ["git", "push", "origin", "main"],
-            cwd=ROOT,
-            env=env,
-            check=True,
-            timeout=120,
-        )
-
-    phase("GITHUB", "PUSH COMPLETE")
-    return True
+        temp_dir = tempfile.TemporaryDirectory(prefix="lapis-git-auth-")
+        askpass = Path(temp_dir.name) / "askpass.sh"
+        askpass.write_text("#!/bin/sh\ncase \"$1\" in\n  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;\n  *) printf '%s\\n' \"$LAPIS_GIT_TOKEN\" ;;\nesac\n", encoding="utf-8")
+        askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        env.update({"GIT_ASKPASS": str(askpass), "LAPIS_GIT_TOKEN": token})
+    try:
+        probe = subprocess.run(["git", "ls-remote", "origin", "HEAD"], cwd=ROOT, env=env, text=True, capture_output=True, check=False, timeout=30)
+        if probe.returncode != 0:
+            phase("GITHUB", "AUTHENTICATION FAILED | no usable non-interactive credentials")
+            raise RuntimeError("No usable non-interactive GitHub authentication is available for push.")
+        phase("GITHUB", "AUTHENTICATION READY")
+        status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT, text=True, capture_output=True, check=True, timeout=30).stdout.splitlines()
+        protected = [line for line in status if line[3:].lstrip().replace("\\", "/") and not (line[3:].lstrip().replace("\\", "/").startswith("training_history/") or line[3:].lstrip().replace("\\", "/").startswith("checkpoints/"))]
+        if protected:
+            raise RuntimeError("Refusing GitHub push because unrelated local changes exist:\n" + "\n".join(protected))
+        canonical = ("training_history/", "checkpoints/latest.pt", "checkpoints/tokenizer/")
+        pushable = [line[3:].lstrip().replace("\\", "/") for line in status if line[3:].lstrip().replace("\\", "/").startswith(canonical)]
+        if pushable:
+            phase("GITHUB", f"COMMIT | files={len(pushable)}")
+            subprocess.run(["git", "add", "training_history", "checkpoints/latest.pt", "checkpoints/tokenizer"], cwd=ROOT, check=True, timeout=30)
+            staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=ROOT, text=True, capture_output=True, check=True, timeout=30).stdout.strip()
+            if staged:
+                subprocess.run(["git", "commit", "-m", "chore: record Colab training outputs"], cwd=ROOT, check=True, timeout=60)
+        subprocess.run(["git", "push", "origin", "main"], cwd=ROOT, env=env, check=True, timeout=120)
+        phase("GITHUB", "PUSH COMPLETE")
+        return True
+    finally:
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 def main() -> int:
@@ -659,36 +411,24 @@ def main() -> int:
         raise SystemExit("--max-chars must be >= 1")
     if args.max_records_per_source < 0:
         raise SystemExit("--max-records-per-source must be >= 0")
-
     if args.smoke_test:
         args.runs = 1
         args.no_push = True
         args.device = "cpu"
-
     banner("LAPISLLM COLAB TRAINING")
     phase("INITIALIZATION", f"root={ROOT}")
     ensure_dependencies()
     device = check_gpu(args.device)
     prepare_corpus(args)
     phase("INITIALIZATION", "COMPLETE")
-
     completed = completed_run_numbers() if args.resume else set()
     remaining = [number for number in range(1, args.runs + 1) if number not in completed]
-    phase(
-        "PLAN",
-        f"runs requested={args.runs} | completed={len(completed)} | remaining={len(remaining)}",
-    )
+    phase("PLAN", f"runs requested={args.runs} | completed={len(completed)} | remaining={len(remaining)}")
     if args.resume:
-        phase(
-            "RESUME",
-            f"previous completed={len(completed)} | remaining={len(remaining)} | "
-            f"next={remaining[0] if remaining else 'none'}",
-        )
-
+        phase("RESUME", f"previous completed={len(completed)} | remaining={len(remaining)} | next={remaining[0] if remaining else 'none'}")
     config = SMOKE_CONFIG if args.smoke_test else CONFIG
     for run_number in remaining:
         train_one_run(run_number, args.runs, args, device, config)
-
     banner("FINAL SUMMARY")
     completed_summaries = []
     for summary_file in sorted(HISTORY.glob("run-*/summary.json")):
@@ -708,14 +448,11 @@ def main() -> int:
         print(f"Tokens seen      : {int(final.get('tokens_seen', 0)):,}", flush=True)
     print(f"History          : {HISTORY}", flush=True)
     print(f"Latest checkpoint: {ROOT / 'checkpoints' / 'latest.pt'}", flush=True)
-
     if args.no_push:
         phase("GITHUB", "SKIPPED | --no-push")
     else:
         token = get_github_token()
-        phase("GITHUB", "TOKEN READY" if token else "TOKEN NOT SET")
         git_push(token, args.smoke_test)
-
     banner("LAPISLLM TRAINING COMPLETE")
     return 0
 
