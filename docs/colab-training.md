@@ -29,6 +29,13 @@ and the DataLoader consumes fixed-length sequences incrementally from the file.
 The corpus size is controlled by the corpus builder's explicit `--max-chars`
 setting, not by an artificial limit in the trainer.
 
+The Colab corpus downloader uses the standard Hugging Face Hub transport by
+default (`HF_HUB_DISABLE_XET=1`) and has a bounded retry policy for transient
+source/network failures. A source that remains unavailable is recorded in the
+manifest and skipped so another configured corpus source can still provide
+training data. Partial output from a failed source is discarded before retrying,
+so a retry cannot duplicate records in the corpus.
+
 If an older Colab runtime already cloned the repository, refresh it before
 running training:
 
