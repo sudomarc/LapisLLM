@@ -1,6 +1,6 @@
 # Colab + GitHub authentication
 
-The LapisLLM Colab runner uses a GitHub token only for authenticated Git operations such as pushing `training_history/`.
+The LapisLLM Colab runner uses a GitHub token only for authenticated Git operations such as publishing `training_history/` and verified checkpoint outputs under `checkpoints/`.
 
 ## Recommended setup
 
@@ -11,19 +11,17 @@ Name: GITHUB_TOKEN
 Value: <GitHub fine-grained PAT>
 ```
 
-The token should have only the repository permissions required by the workflow. For a private repository or a repository where the runner must write to `main`, grant the minimum contents permission needed for that repository.
+The token should have only the repository permissions required by the workflow. For a repository where the runner must write to `main`, grant the minimum contents permission needed for that repository.
 
-Run the orchestrator normally:
-
-```python
-!python scripts/colab_run.py
-```
-
-You can also control the run explicitly:
+Run the canonical orchestrator:
 
 ```python
-!python scripts/colab_run.py --runs 1 --monitor-interval 500 --device auto
+%cd /content/LapisLLM
+!git pull --ff-only
+!python -m scripts.colab_train
 ```
+
+The canonical path is non-interactive. It must not prompt for a run count, password, token, or consumer chat input.
 
 ## Authentication precedence
 
@@ -35,8 +33,7 @@ The runner checks these sources in order:
 4. Colab Secret `GITHUB_TOKEN`
 5. Colab Secret `GH_TOKEN`
 6. Colab Secret `LAPIS_GITHUB_TOKEN`
-7. Existing Git credentials
-8. A masked interactive PAT prompt outside non-interactive environments
+7. Existing Git credentials are not converted into an interactive prompt; when no usable authentication is available, the runner fails clearly.
 
 ## Token handling
 
@@ -46,9 +43,15 @@ The helper is deleted immediately after the Git operation. The runner also avoid
 
 ## What is pushed
 
-The runner only allows changes under `training_history/` to be committed by the automated history step. Unrelated local changes abort synchronization/push instead of being silently overwritten.
+The runner may publish only the generated paths owned by the training workflow:
 
-Large generated checkpoints and training corpora remain local according to the repository's existing Git ignore policy.
+```text
+training_history/
+checkpoints/latest.pt
+checkpoints/tokenizer/
+```
+
+Unrelated source changes abort synchronization instead of being silently overwritten. Generated corpus text remains excluded from Git.
 
 ## Security notes
 
