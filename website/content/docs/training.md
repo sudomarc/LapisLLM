@@ -14,6 +14,8 @@ The model is trained with causal cross-entropy for next-token prediction. The tr
 
 The training monitor can record loss, perplexity, learning rate, tokens seen, and generated samples from fixed prompts during training. Custom monitor prompts use `||` as the separator.
 
+The canonical Colab runner disables generated-text sampling during optimization (`--monitor-interval 0`) so the training loop is not implicitly turned into repeated train-plus-inference work. Developers can explicitly enable the monitor when investigating learning behavior.
+
 ```text
 python scripts/train.py --monitor-prompts "Machine learning is||The transformer architecture"
 ```
@@ -22,8 +24,10 @@ python scripts/train.py --monitor-prompts "Machine learning is||The transformer 
 
 A successful training run verifies that the checkpoint exists and that its paired tokenizer artifact exists. The inference runtime also verifies tokenizer version and vocabulary compatibility before loading a checkpoint.
 
-Checkpoint publication is an explicit developer workflow and is used to make a verified checkpoint available to external consumers such as CHAD. Generated training data and large artifacts are not automatically treated as source code.
+Checkpoint publication is an explicit developer workflow and is used to make a verified checkpoint available to external consumers such as CHAD. Generated training data remains experiment input and is not automatically treated as source code.
 
 ## Colab
 
-`python scripts/colab_train.py` is the repository's non-interactive Colab entry point. Recent fixes make it invoke the actual trainer directly, verify the resulting checkpoint, generate preview samples, write experiment history, and stage the newest verified checkpoint for publication.
+`python -m scripts.colab_train` is the canonical non-interactive Colab entry point. It executes the real streaming trainer, reports progress without requesting notebook input, verifies the resulting checkpoint, runs post-training preview generations, records training history, updates the canonical checkpoint paths, and publishes the permitted generated outputs when GitHub authentication is available.
+
+The Colab corpus builder uses Hugging Face streaming and divides its explicit character budget across configured sources so one source cannot consume the whole budget before later sources are considered. Network transport uses bounded retries and explicit Hugging Face Hub timeouts.
