@@ -83,16 +83,32 @@ def test_corpus_cache_requires_current_builder_contract(tmp_path, monkeypatch):
     assert not colab.corpus_valid(200_000_000)
 
 
-def test_smoke_uses_its_effective_corpus_budget(monkeypatch):
+def test_smoke_uses_its_effective_corpus_budget(monkeypatch, tmp_path):
     args = colab.parse_args()
     args.smoke_test = True
     args.max_chars = 200_000_000
 
+    corpus = tmp_path / "corpus.txt"
+    manifest = tmp_path / "manifest.json"
+    corpus.write_text("data", encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "contract_version": "lapis-colab-corpus-v2",
+                "max_chars": 50_000,
+                "actual_chars": 4,
+                "sources": [{"id": "wikipedia"}],
+                "output": str(corpus),
+            }
+        ),
+        encoding="utf-8",
+    )
+
     seen = []
     monkeypatch.setattr(colab, "corpus_valid", lambda max_chars: seen.append(max_chars) or True)
     monkeypatch.setattr(colab, "phase", lambda _name, _message: None)
-    monkeypatch.setattr(colab, "CORPUS", Path("training_data/colab_pretrain.txt"))
-    monkeypatch.setattr(colab, "MANIFEST", Path("training_data/colab_pretrain_manifest.json"))
+    monkeypatch.setattr(colab, "CORPUS", corpus)
+    monkeypatch.setattr(colab, "MANIFEST", manifest)
 
     colab.prepare_corpus(args)
     assert seen == [50_000]
