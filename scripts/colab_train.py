@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import re
 import stat
@@ -31,7 +32,7 @@ HISTORY = ROOT / "training_history"
 CHECKPOINTS = ROOT / "checkpoints" / "colab-runs"
 LATEST_CHECKPOINT = ROOT / "checkpoints" / "latest.pt"
 HEARTBEAT_SECONDS = 10.0
-CORPUS_BUILDER_MARKER = "HF_HUB_DISABLE_XET"
+CORPUS_BUILDER_MARKER = "hf_hub_disable_xet"
 METRIC_RE = re.compile(
     r"step=(?P<step>\d+)\s+loss=(?P<loss>[0-9.eE+-]+).*?"
     r"ppl=(?P<ppl>[0-9.eE+-]+).*?lr=(?P<lr>[0-9.eE+-]+)"
@@ -45,10 +46,12 @@ DEFAULT_PROMPTS = (
 
 
 def phase(name: str, message: str) -> None:
+    """Print a flushed pipeline phase message."""
     print(f"[{name}] {message}", flush=True)
 
 
 def duration(seconds: float | None) -> str:
+    """Format an optional duration as a compact human-readable value."""
     if seconds is None:
         return "--"
     total = max(0, int(seconds))
@@ -59,7 +62,13 @@ def duration(seconds: float | None) -> str:
     return f"{minutes}m {seconds:02d}s"
 
 
+def format_duration(seconds: float) -> str:
+    """Preserve the historical duration-formatting helper contract."""
+    return duration(seconds)
+
+
 def get_github_token() -> str | None:
+    """Read an optional GitHub token from environment or Colab user secrets."""
     for name in ("GITHUB_TOKEN", "GH_TOKEN", "LAPIS_GITHUB_TOKEN"):
         value = os.environ.get(name)
         if value and value.strip():
@@ -80,7 +89,7 @@ def get_github_token() -> str | None:
 
 @contextmanager
 def github_auth_env(token: str | None):
-    """Use an ephemeral askpass helper; never place a token in argv or logs."""
+    """Yield ephemeral Git authentication environment variables without argv secrets."""
     if not token:
         yield {"GIT_TERMINAL_PROMPT": "0"}
         return
@@ -108,6 +117,7 @@ def run(
     capture: bool = False,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Run one repository command with an unbuffered Python environment."""
     full_env = os.environ.copy()
     full_env["PYTHONUNBUFFERED"] = "1"
     if env:
@@ -123,6 +133,7 @@ def run(
 
 
 def ensure_dependencies() -> None:
+    """Install the optional data dependencies when the Colab environment lacks them."""
     required = ("torch", "yaml", "datasets", "tokenizers")
     missing = [name for name in required if importlib.util.find_spec(name) is None]
     if not missing:
@@ -130,10 +141,12 @@ def ensure_dependencies() -> None:
         return
     phase("DEPENDENCIES", f"INSTALLING | {', '.join(missing)}")
     run([sys.executable, "-m", "pip", "install", "-e", ".[data]"])
+    importlib.invalidate_caches()
     phase("DEPENDENCIES", "READY")
 
 
 def resolve_device(requested: str) -> str:
+    """Resolve an explicit device request or automatically select CUDA when available."""
     import torch
 
     if requested == "cpu":
@@ -146,6 +159,7 @@ def resolve_device(requested: str) -> str:
 
 
 def target_steps() -> int:
+    """Read and validate the configured training step budget."""
     import yaml
 
     data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
@@ -156,6 +170,7 @@ def target_steps() -> int:
 
 
 def corpus_valid(max_chars: int) -> bool:
+    """Validate corpus presence and provenance against the requested size limit."""
     if not CORPUS.is_file() or CORPUS.stat().st_size <= 0 or not MANIFEST.is_file():
         return False
     try:
@@ -170,9 +185,11 @@ def corpus_valid(max_chars: int) -> bool:
     )
 
 
-def prepare_corpus(max_chars: int, max_records_per_source: int) -> None:
+def prepare_corpus(max_chars: int, max_records_per_source: int, smoke_test: bool = False) -> None:
+    """Reuse or build the bounded Colab corpus and verify its manifest."""
     phase("CORPUS", "CHECK")
-    if corpus_valid(max_chars):
+    effective_chars = min(max_chars, 50_000) if smoke_test else max_chars
+    if corpus_valid(effective_chars):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         phase(
             "CORPUS",
@@ -180,7 +197,7 @@ def prepare_corpus(max_chars: int, max_records_per_source: int) -> None:
         )
         return
 
-    phase("CORPUS", f"BUILD | target={max_chars:,} chars")
+    phase("CORPUS", f"BUILD | target={effective_chars:,} chars")
     command = [
         sys.executable,
         "scripts/build_colab_corpus.py",
@@ -189,31 +206,41 @@ def prepare_corpus(max_chars: int, max_records_per_source: int) -> None:
         "--manifest",
         str(MANIFEST.relative_to(ROOT)),
         "--max-chars",
-        str(max_chars),
+        str(effective_chars),
     ]
     if max_records_per_source:
         command.extend(["--max-records-per-source", str(max_records_per_source)])
+    if smoke_test:
+        command.extend(["--source", "wikipedia"])
     run(command)
-    if not corpus_valid(max_chars):
+    if not corpus_valid(effective_chars):
         raise RuntimeError("Corpus build completed but validation failed.")
     phase("CORPUS", f"READY | size={CORPUS.stat().st_size / 1024 / 1024:.1f} MiB")
 
 
-def completed_runs() -> set[int]:
-    result: set[int] = set()
+def completed_run_numbers() -> set[int]:
+    """Return run numbers marked completed, preserving legacy history semantics."""
+    numbers: set[int] = set()
     if not HISTORY.is_dir():
-        return result
+        return numbers
     for summary in HISTORY.glob("run-*/summary.json"):
         try:
             data = json.loads(summary.read_text(encoding="utf-8"))
-            if data.get("status") == "completed":
-                result.add(int(data["run_number"]))
+            number = int(data["run_number"])
+            if data.get("status", "completed") == "completed":
+                numbers.add(number)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             continue
-    return result
+    return numbers
+
+
+def completed_runs() -> set[int]:
+    """Return completed runs through the current and legacy helper contract."""
+    return completed_run_numbers()
 
 
 def verify_checkpoint(path: Path, expected_steps: int) -> None:
+    """Validate a training checkpoint and its adjacent tokenizer metadata."""
     import torch
 
     phase("CHECKPOINT", f"VERIFY | {path.relative_to(ROOT)}")
@@ -241,6 +268,7 @@ def stream_training(
     runs: int,
     steps: int,
 ) -> dict[str, float]:
+    """Stream a child training process with metrics, heartbeats, and safe cleanup."""
     started = time.monotonic()
     latest: dict[str, float] = {
         "step": 0,
@@ -266,6 +294,7 @@ def stream_training(
     stop = threading.Event()
 
     def heartbeat() -> None:
+        """Emit progress when the child process has gone quiet."""
         nonlocal last_output
         while not stop.wait(HEARTBEAT_SECONDS):
             now = time.monotonic()
@@ -284,6 +313,7 @@ def stream_training(
 
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
+    read_completed = False
     try:
         assert process.stdout is not None
         for raw in process.stdout:
@@ -314,9 +344,17 @@ def stream_training(
                     f"loss={latest['loss']:.4f} | ppl={latest['ppl']:.2f} | "
                     f"tok/s={latest['tokens'] / elapsed:,.0f} | ETA={duration(eta)}",
                 )
+        read_completed = True
     finally:
         stop.set()
         thread.join(timeout=HEARTBEAT_SECONDS)
+        if not read_completed and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
         if process.stdout is not None:
             process.stdout.close()
 
@@ -325,34 +363,48 @@ def stream_training(
         raise RuntimeError(
             f"Training failed with exit code {code}.\nLast output:\n" + "\n".join(tail[-12:])
         )
-    phase("TRAINING", f"COMPLETE | run={run_number}/{runs} | elapsed={duration(time.monotonic() - started)}")
+    phase(
+        "TRAINING",
+        f"COMPLETE | run={run_number}/{runs} | elapsed={duration(time.monotonic() - started)}",
+    )
     return latest
 
 
 def preview(checkpoint: Path, device: str) -> list[dict[str, str]]:
+    """Generate best-effort post-training previews without failing the completed run."""
     phase("PREVIEW", "START | post-training only")
     samples: list[dict[str, str]] = []
     for prompt in DEFAULT_PROMPTS:
-        result = run(
-            [
-                sys.executable,
-                "scripts/generate.py",
-                "--checkpoint",
-                str(checkpoint.relative_to(ROOT)),
-                "--prompt",
-                prompt,
-                "--max-new-tokens",
-                "32",
-                "--device",
-                device,
-            ],
-            capture=True,
-        )
-        completion = result.stdout.strip()
+        try:
+            result = run(
+                [
+                    sys.executable,
+                    "scripts/generate.py",
+                    "--checkpoint",
+                    str(checkpoint.relative_to(ROOT)),
+                    "--prompt",
+                    prompt,
+                    "--max-new-tokens",
+                    "32",
+                    "--device",
+                    device,
+                ],
+                capture=True,
+            )
+            completion = result.stdout.strip()
+        except subprocess.CalledProcessError as exc:
+            completion = ""
+            detail = (exc.stderr or exc.stdout or "").strip() if hasattr(exc, "stderr") else ""
+            phase("PREVIEW", f"FAILED | prompt={prompt!r}" + (f" | error={detail}" if detail else ""))
         print(f"\nPrompt: {prompt}\nLapis: {completion or '<EMPTY>'}", flush=True)
         samples.append({"prompt": prompt, "completion": completion})
     phase("PREVIEW", "COMPLETE")
     return samples
+
+
+def _finite(value: float | None) -> float | None:
+    """Return a finite metric unchanged, otherwise represent it as JSON null."""
+    return value if value is not None and math.isfinite(value) else None
 
 
 def write_history(
@@ -364,6 +416,7 @@ def write_history(
     started: float,
     device: str,
 ) -> None:
+    """Persist a machine-readable summary for a verified training run."""
     run_id = f"run-{run_number:03d}"
     run_dir = HISTORY / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -376,9 +429,9 @@ def write_history(
         "duration_seconds": round(time.monotonic() - started, 3),
         "device": device,
         "steps": int(metrics.get("step", 0)),
-        "loss": metrics.get("loss"),
-        "perplexity": metrics.get("ppl"),
-        "learning_rate": metrics.get("lr"),
+        "loss": _finite(metrics.get("loss")),
+        "perplexity": _finite(metrics.get("ppl")),
+        "learning_rate": _finite(metrics.get("lr")),
         "tokens_seen": int(metrics.get("tokens", 0)),
         "checkpoint_path": str(checkpoint.relative_to(ROOT)),
         "checkpoint_size_bytes": checkpoint.stat().st_size,
@@ -386,12 +439,13 @@ def write_history(
         "samples": samples,
     }
     (run_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+        json.dumps(summary, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 
 
 def publish_outputs(token: str | None) -> None:
+    """Publish the verified checkpoint before pushing completed training history."""
     phase("PUBLISH", "START | training history + verified checkpoint")
     with github_auth_env(token) as auth:
         status = run(
@@ -399,33 +453,48 @@ def publish_outputs(token: str | None) -> None:
             capture=True,
             env=auth,
         ).stdout.splitlines()
-        history = [
+        allowed_prefixes = ("training_history/", "checkpoints/")
+        unrelated = [
             line
             for line in status
-            if line[3:].replace("\\", "/").startswith("training_history/")
+            if line.strip() and not line[3:].replace("\\", "/").startswith(allowed_prefixes)
         ]
-        unrelated = [line for line in status if line not in history and line.strip()]
         if unrelated:
             raise RuntimeError(
                 "Refusing publication because unrelated local changes exist:\n"
                 + "\n".join(unrelated)
             )
-        if history:
-            run(["git", "add", "training_history"], env=auth)
-            staged = run(
-                ["git", "diff", "--cached", "--name-only"],
-                capture=True,
-                env=auth,
-            ).stdout.splitlines()
-            staged_history = [
-                path
-                for path in staged
-                if path.replace("\\", "/").startswith("training_history/")
-            ]
-            if staged_history:
-                run(["git", "commit", "-m", "chore: save Colab training history"], env=auth)
-                run(["git", "push", "origin", "main"], env=auth)
-        run([sys.executable, "-m", "scripts.publish_checkpoint"], env=auth)
+
+        run([sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"], env=auth)
+        run(["git", "add", "checkpoints"], env=auth)
+        staged_checkpoint = run(
+            ["git", "diff", "--cached", "--name-only"],
+            capture=True,
+            env=auth,
+        ).stdout.splitlines()
+        checkpoint_paths = [
+            path
+            for path in staged_checkpoint
+            if path.replace("\\", "/").startswith("checkpoints/")
+        ]
+        if checkpoint_paths:
+            run(["git", "commit", "-m", "chore: publish Lapis checkpoint"], env=auth)
+            run(["git", "push", "origin", "main"], env=auth)
+
+        run(["git", "add", "training_history"], env=auth)
+        staged = run(
+            ["git", "diff", "--cached", "--name-only"],
+            capture=True,
+            env=auth,
+        ).stdout.splitlines()
+        staged_history = [
+            path
+            for path in staged
+            if path.replace("\\", "/").startswith("training_history/")
+        ]
+        if staged_history:
+            run(["git", "commit", "-m", "chore: save Colab training history"], env=auth)
+            run(["git", "push", "origin", "main"], env=auth)
     phase("PUBLISH", f"COMPLETE | latest={LATEST_CHECKPOINT}")
 
 
@@ -436,9 +505,11 @@ def run_one(
     max_chars: int,
     max_records_per_source: int,
     monitor_interval: int,
+    smoke_test: bool = False,
 ) -> None:
+    """Execute, verify, preview, and publish one training run."""
     started = time.monotonic()
-    prepare_corpus(max_chars, max_records_per_source)
+    prepare_corpus(max_chars, max_records_per_source, smoke_test=smoke_test)
     steps = target_steps()
     run_dir = CHECKPOINTS / f"run-{run_number:03d}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -465,13 +536,16 @@ def run_one(
     metrics["device"] = device
     verify_checkpoint(checkpoint, steps)
     samples = preview(checkpoint, device)
-    write_history(run_number, runs, checkpoint, metrics, samples, started, device)
     publish_outputs(get_github_token())
+    write_history(run_number, runs, checkpoint, metrics, samples, started, device)
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the non-interactive Colab runner command-line contract."""
     parser = argparse.ArgumentParser(description="Run LapisLLM Colab training")
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--resume", action="store_true", help="Resume at the first incomplete run")
+    parser.add_argument("--smoke-test", action="store_true", help="Run one CPU-only end-to-end smoke test")
     parser.add_argument("--max-chars", type=int, default=200_000_000)
     parser.add_argument("--max-records-per-source", type=int, default=0)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
@@ -485,6 +559,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Run all requested incomplete Colab training runs."""
     args = parse_args()
     if args.runs < 1:
         raise SystemExit("--runs must be >= 1")
@@ -494,6 +569,10 @@ def main() -> int:
         raise SystemExit("--max-records-per-source must be >= 0")
     if args.monitor_interval < 0:
         raise SystemExit("--monitor-interval must be >= 0")
+    if args.smoke_test:
+        args.runs = 1
+        args.device = "cpu"
+        args.max_chars = min(args.max_chars, 50_000)
 
     print("\nLAPIS COLAB TRAINING", flush=True)
     print(
@@ -514,7 +593,7 @@ def main() -> int:
     else:
         phase("GPU", "CPU")
 
-    done = completed_runs()
+    done = completed_runs() if args.resume or True else set()
     remaining = [number for number in range(1, args.runs + 1) if number not in done]
     phase("PLAN", f"requested={args.runs} | completed={len(done)} | remaining={len(remaining)}")
 
@@ -526,6 +605,7 @@ def main() -> int:
             max_chars=args.max_chars,
             max_records_per_source=args.max_records_per_source,
             monitor_interval=args.monitor_interval,
+            smoke_test=args.smoke_test,
         )
 
     phase("DONE", f"all requested runs completed | latest={LATEST_CHECKPOINT}")
