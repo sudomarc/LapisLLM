@@ -34,6 +34,7 @@ RETRY_BACKOFF_SECONDS = 2.0
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse corpus builder command-line options."""
     parser = argparse.ArgumentParser(description="Build a bounded LapisLLM Colab corpus")
     parser.add_argument("--output", default="training_data/colab_pretrain.txt")
     parser.add_argument("--manifest", default="training_data/colab_pretrain_manifest.json")
@@ -44,17 +45,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def clean_text(value: str) -> str:
+    """Normalize line endings and collapse excessive blank lines."""
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    value = re.sub(r"\n{3,}", "\n\n", value)
-    return value.strip()
+    return re.sub(r"\n{3,}", "\n\n", value).strip()
 
 
 def selected_sources(args: argparse.Namespace):
+    """Return the explicitly selected registry-approved sources in stable order."""
     requested = set(args.source or [item[0] for item in DEFAULT_SOURCES])
     return [item for item in DEFAULT_SOURCES if item[0] in requested]
 
 
 def load_kwargs(dataset_id: str, config: str | None, split: str) -> dict[str, Any]:
+    """Build keyword arguments for a streaming Hugging Face dataset load."""
     kwargs: dict[str, Any] = {"path": dataset_id, "split": split, "streaming": True}
     if config:
         kwargs["name"] = config
@@ -62,6 +65,7 @@ def load_kwargs(dataset_id: str, config: str | None, split: str) -> dict[str, An
 
 
 def format_size(value: int) -> str:
+    """Format a byte or character count with a binary unit suffix."""
     units = ("B", "KB", "MB", "GB", "TB")
     size = float(value)
     for unit in units:
@@ -80,6 +84,7 @@ def print_progress(
     max_chars: int,
     started: float,
 ) -> None:
+    """Print bounded corpus progress and an approximate ETA."""
     elapsed = max(0.001, time.monotonic() - started)
     percent = min(100.0, (total_chars / max_chars) * 100) if max_chars else 100.0
     chars_per_sec = total_chars / elapsed
@@ -94,10 +99,15 @@ def print_progress(
     )
 
 
+def load_dataset(**kwargs: Any):
+    """Load a Hugging Face dataset lazily so metadata-only tests need no data extra."""
+    from datasets import load_dataset as hf_load_dataset
+
+    return hf_load_dataset(**kwargs)
+
+
 def load_source(source_id: str, dataset_id: str, config: str | None, split: str):
     """Open one streaming source with a bounded retry budget."""
-    from datasets import load_dataset
-
     last_error: Exception | None = None
     for attempt in range(1, SOURCE_RETRIES + 1):
         try:
@@ -207,6 +217,7 @@ def write_source(
 
 
 def main() -> int:
+    """Build and persist the bounded corpus plus provenance manifest."""
     args = parse_args()
     if args.max_chars < 1:
         raise SystemExit("--max-chars must be >= 1")
