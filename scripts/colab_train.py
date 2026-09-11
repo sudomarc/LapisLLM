@@ -1,76 +1,241 @@
 #!/usr/bin/env python3
-"""Stable, non-interactive Colab entry point for LapisLLM training."""
+"""Non-interactive Colab training entry point for LapisLLM.
+
+This is deliberately boring: one command runs the complete pipeline without
+waiting for notebook input. Heavy work stays in the existing Lapis scripts;
+this file only owns orchestration, observability, verification, and publication.
+"""
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
+import json
 import os
+import re
+import stat
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+CONFIG = ROOT / "configs" / "colab.yaml"
+CORPUS = ROOT / "training_data" / "colab_pretrain.txt"
+MANIFEST = ROOT / "training_data" / "colab_pretrain_manifest.json"
+HISTORY = ROOT / "training_history"
+CHECKPOINTS = ROOT / "checkpoints" / "colab-runs"
+HEARTBEAT_SECONDS = 10.0
+CORPUS_BUILDER_MARKER = "HF_HUB_DISABLE_XET"
+METRIC_RE = re.compile(
+    r"step=(?P<step>\d+)\s+loss=(?P<loss>[0-9.eE+-]+).*?"
+    r"ppl=(?P<ppl>[0-9.eE+-]+).*?lr=(?P<lr>[0-9.eE+-]+)"
+)
+TOKEN_RE = re.compile(r"tokens=(?P<tokens>[0-9,]+)")
 
-from scripts import _colab_train_impl as _impl
 
-HISTORY = _impl.HISTORY
-METRIC_RE = _impl.METRIC_RE
-TOKEN_RE = _impl.TOKEN_RE
-format_duration = _impl.format_duration
-get_github_token = _impl.get_github_token
+DEFAULT_PROMPTS = (
+    "Explain a transformer in simple terms.",
+    "Write a Python function that reverses a string.",
+    "Explique les réseaux de neurones.",
+)
 
 
-def completed_run_numbers() -> set[int]:
-    original = _impl.HISTORY
-    _impl.HISTORY = HISTORY
+def phase(name: str, message: str) -> None:
+    print(f"[{name}] {message}", flush=True)
+
+
+def duration(seconds: float) -> str:
+    total = max(0, int(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    return f"{minutes}m {seconds:02d}s"
+
+
+def get_github_token() -> str | None:
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "LAPIS_GITHUB_TOKEN"):
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value.strip()
     try:
-        return _impl.completed_run_numbers()
-    finally:
-        _impl.HISTORY = original
+        from google.colab import userdata  # type: ignore
+    except (ImportError, ModuleNotFoundError):
+        return None
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "LAPIS_GITHUB_TOKEN"):
+        try:
+            value = userdata.get(name)
+        except Exception:
+            continue
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
 
 
-def _stage_latest_checkpoint() -> None:
-    subprocess.run(
-        [sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"],
+@contextmanager
+def github_auth_env(token: str | None):
+    """Yield ephemeral askpass credentials without putting the token in argv."""
+    if not token:
+        yield {"GIT_TERMINAL_PROMPT": "0"}
+        return
+
+    with tempfile.TemporaryDirectory(prefix="lapis-git-auth-") as tmp:
+        askpass = Path(tmp) / "askpass.sh"
+        askpass.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;\n"
+            "  *) printf '%s\\n' \"$LAPIS_GIT_TOKEN\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        yield {
+            "GIT_ASKPASS": str(askpass),
+            "GIT_TERMINAL_PROMPT": "0",
+            "LAPIS_GIT_TOKEN": token,
+        }
+
+
+def run(command: list[str], *, capture: bool = False, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    full_env = os.environ.copy()
+    full_env["PYTHONUNBUFFERED"] = "1"
+    if env:
+        full_env.update(env)
+    return subprocess.run(
+        command,
         cwd=ROOT,
+        env=full_env,
         check=True,
+        text=True,
+        capture_output=capture,
     )
 
 
-def train_one_run(run_number: int, total_runs: int, args, device: str, config: Path) -> dict:
-    """Run the real trainer directly instead of the broken Typer module invocation."""
-    run_dir = _impl.CHECKPOINTS / f"run-{run_number:03d}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = run_dir / "checkpoint.pt"
-    monitor_log = run_dir / "learning_monitor.jsonl"
-    steps = _impl.target_steps(config)
-    _impl.phase("RUN", f"{run_number} / {total_runs}")
-    _impl.phase("RUN", f"target_steps={steps:,} | checkpoint={checkpoint}")
-    _impl.phase("TOKENIZER", "STARTING | trainer will reuse a compatible on-disk tokenizer when available")
-    _impl.phase("DATASET", "STARTING | corpus -> token IDs -> fixed-length samples")
-    _impl.phase("MODEL", "STARTING | initialization and device placement occur inside scripts.train")
-    _impl.phase("TRAINING", "START")
+def ensure_dependencies() -> None:
+    required = ("torch", "yaml", "datasets", "tokenizers")
+    missing = [name for name in required if importlib.util.find_spec(name) is None]
+    if not missing:
+        phase("DEPENDENCIES", "READY")
+        return
+    phase("DEPENDENCIES", f"INSTALLING | {', '.join(missing)}")
+    run([sys.executable, "-m", "pip", "install", "-e", ".[data]"])
+    phase("DEPENDENCIES", "READY")
 
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.train",
-        "--config", str(config.relative_to(ROOT)),
-        "--data", str(_impl.CORPUS.relative_to(ROOT)),
-        "--checkpoint", str(checkpoint.relative_to(ROOT)),
-        "--device", device,
-        "--epochs", "1000",
-        "--monitor-interval", str(args.monitor_interval),
-        "--monitor-sample-tokens", str(args.monitor_sample_tokens),
-        "--monitor-log", str(monitor_log.relative_to(ROOT)),
-    ]
-    if args.monitor_prompts:
-        command += ["--monitor-prompts", args.monitor_prompts]
 
+def resolve_device(requested: str) -> str:
+    import torch
+
+    if requested == "cpu":
+        return "cpu"
+    if requested == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested but no CUDA device is available.")
+        return "cuda"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def target_steps() -> int:
+    import yaml
+
+    data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    steps = int(data["training"]["max_steps"])
+    if steps < 1:
+        raise ValueError("configs/colab.yaml training.max_steps must be >= 1")
+    return steps
+
+
+def corpus_valid(max_chars: int) -> bool:
+    if not CORPUS.is_file() or CORPUS.stat().st_size <= 0 or not MANIFEST.is_file():
+        return False
+    try:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if int(manifest.get("actual_chars", 0)) <= 0:
+        return False
+    if int(manifest.get("max_chars", 0)) != max_chars:
+        return False
+    if not manifest.get("output"):
+        return False
+    return CORPUS_BUILDER_MARKER in manifest
+
+
+def prepare_corpus(max_chars: int) -> None:
+    phase("CORPUS", "CHECK")
+    if corpus_valid(max_chars):
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        phase(
+            "CORPUS",
+            f"REUSED | size={CORPUS.stat().st_size / 1024 / 1024:.1f} MiB | chars={manifest['actual_chars']:,}",
+        )
+        return
+
+    phase("CORPUS", f"BUILD | target={max_chars:,} chars")
+    run(
+        [
+            sys.executable,
+            "scripts/build_colab_corpus.py",
+            "--output",
+            str(CORPUS.relative_to(ROOT)),
+            "--manifest",
+            str(MANIFEST.relative_to(ROOT)),
+            "--max-chars",
+            str(max_chars),
+        ]
+    )
+    if not corpus_valid(max_chars):
+        raise RuntimeError("Corpus build completed but validation failed.")
+    phase("CORPUS", f"READY | size={CORPUS.stat().st_size / 1024 / 1024:.1f} MiB")
+
+
+def completed_runs() -> set[int]:
+    result: set[int] = set()
+    if not HISTORY.is_dir():
+        return result
+    for summary in HISTORY.glob("run-*/summary.json"):
+        try:
+            data = json.loads(summary.read_text(encoding="utf-8"))
+            if data.get("status") == "completed":
+                result.add(int(data["run_number"]))
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+    return result
+
+
+def verify_checkpoint(path: Path, expected_steps: int) -> None:
+    import torch
+
+    phase("CHECKPOINT", f"VERIFY | {path.relative_to(ROOT)}")
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise RuntimeError(f"Checkpoint missing or empty: {path}")
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    if "model_state_dict" not in state or "config" not in state:
+        raise RuntimeError("Checkpoint is missing model/config metadata.")
+    step = int(state.get("step", -1))
+    if step != expected_steps:
+        raise RuntimeError(f"Checkpoint step mismatch: got {step}, expected {expected_steps}.")
+    tokenizer = path.parent / "tokenizer" / "tokenizer.json"
+    if not tokenizer.is_file() or tokenizer.stat().st_size <= 0:
+        raise RuntimeError(f"Checkpoint tokenizer missing or empty: {tokenizer}")
+    if state.get("tokenizer_version") is None:
+        raise RuntimeError("Checkpoint tokenizer metadata is missing.")
+    phase("CHECKPOINT", f"VERIFIED | {path.stat().st_size / 1024 / 1024:.1f} MiB | step={step:,}")
+
+
+def stream_training(command: list[str], *, run_number: int, runs: int, steps: int) -> tuple[dict[str, float], list[str]]:
     started = time.monotonic()
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    latest: dict[str, float] = {"step": 0, "loss": float("nan"), "ppl": float("nan"), "lr": float("nan"), "tokens": 0}
+    tail: list[str] = []
+    phase("TRAINING", f"START | run={run_number}/{runs} | steps={steps:,}")
+
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     process = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -80,46 +245,219 @@ def train_one_run(run_number: int, total_runs: int, args, device: str, config: P
         stderr=subprocess.STDOUT,
         bufsize=1,
     )
+    last_output = time.monotonic()
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        nonlocal last_output
+        while not stop.wait(HEARTBEAT_SECONDS):
+            now = time.monotonic()
+            if now - last_output < HEARTBEAT_SECONDS:
+                continue
+            elapsed = now - started
+            step = int(latest["step"])
+            rate = step / elapsed if elapsed else 0.0
+            eta = (steps - step) / rate if rate > 0 else None
+            phase(
+                "TRAINING",
+                f"HEARTBEAT | run={run_number}/{runs} | step={step:,}/{steps:,} | elapsed={duration(elapsed)}"
+                + (f" | ETA={duration(eta)}" if eta is not None else ""),
+            )
+            last_output = now
+
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
     try:
-        metrics = _impl.monitor_child(
-            process,
-            run_number=run_number,
-            total_runs=total_runs,
-            target_steps=steps,
-            started=started,
-            heartbeat_seconds=args.heartbeat_seconds,
+        assert process.stdout is not None
+        for raw in process.stdout:
+            line = raw.rstrip("\n")
+            if not line:
+                continue
+            print(line, flush=True)
+            tail.append(line)
+            if len(tail) > 40:
+                tail.pop(0)
+            last_output = time.monotonic()
+            token_match = TOKEN_RE.search(line)
+            if token_match:
+                latest["tokens"] = float(token_match.group("tokens").replace(",", ""))
+            metric = METRIC_RE.search(line)
+            if metric:
+                latest["step"] = float(metric.group("step"))
+                latest["loss"] = float(metric.group("loss"))
+                latest["ppl"] = float(metric.group("ppl"))
+                latest["lr"] = float(metric.group("lr"))
+                elapsed = max(0.001, time.monotonic() - started)
+                rate = latest["step"] / elapsed
+                eta = (steps - latest["step"]) / rate if rate > 0 else None
+                phase(
+                    "TRAINING",
+                    f"run={run_number}/{runs} | step={int(latest['step']):,}/{steps:,} | "
+                    f"loss={latest['loss']:.4f} | ppl={latest['ppl']:.2f} | "
+                    f"tok/s={latest['tokens'] / elapsed:,.0f}"
+                    + (f" | ETA={duration(eta)}" if eta is not None else ""),
+                )
+    finally:
+        stop.set()
+        thread.join(timeout=HEARTBEAT_SECONDS)
+        if process.stdout is not None:
+            process.stdout.close()
+
+    code = process.wait()
+    if code != 0:
+        diagnostic = "\n".join(tail[-12:])
+        raise RuntimeError(
+            f"Training failed with exit code {code}.\nLast output:\n{diagnostic}"
         )
-        metrics["device"] = device
-        _impl.phase("TRAINING", f"COMPLETE | run={run_number}/{total_runs} | elapsed={format_duration(time.monotonic() - started)}")
-        _impl.verify_checkpoint(checkpoint, steps)
-        prompts = tuple(
-            item.strip()
-            for item in (
-                args.monitor_prompts
-                or "Explain a transformer.||Write a Python function to reverse a string.||Explique les réseaux de neurones."
-            ).split("||")
-            if item.strip()
+    phase("TRAINING", f"COMPLETE | run={run_number}/{runs} | elapsed={duration(time.monotonic() - started)}")
+    return latest, tail
+
+
+def preview(checkpoint: Path, device: str) -> list[dict[str, str]]:
+    phase("PREVIEW", "START | post-training only")
+    samples: list[dict[str, str]] = []
+    for prompt in DEFAULT_PROMPTS:
+        result = run(
+            [
+                sys.executable,
+                "scripts/generate.py",
+                "--checkpoint",
+                str(checkpoint.relative_to(ROOT)),
+                "--prompt",
+                prompt,
+                "--max-new-tokens",
+                "32",
+                "--device",
+                device,
+            ],
+            capture=True,
         )
-        samples = _impl.generate_preview(checkpoint, device, prompts)
-        _impl.write_history(run_number, total_runs, checkpoint, metrics, samples, started, config)
-        _stage_latest_checkpoint()
-        return metrics
-    except Exception as exc:
-        _impl.write_failure_history(run_number, total_runs, exc, started)
-        _impl.phase("RUN", f"FAILED | run={run_number}/{total_runs} | error={exc}")
-        raise
+        completion = result.stdout.strip()
+        print(f"\nPrompt: {prompt}\nLapis: {completion or '<EMPTY>'}", flush=True)
+        samples.append({"prompt": prompt, "completion": completion})
+    phase("PREVIEW", "COMPLETE")
+    return samples
+
+
+def write_history(run_number: int, runs: int, checkpoint: Path, metrics: dict[str, float], samples: list[dict[str, str]], started: float, device: str) -> None:
+    run_id = f"run-{run_number:03d}"
+    run_dir = HISTORY / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "run_id": run_id,
+        "run_number": run_number,
+        "total_runs": runs,
+        "status": "completed",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "device": device,
+        "steps": int(metrics.get("step", 0)),
+        "loss": metrics.get("loss"),
+        "perplexity": metrics.get("ppl"),
+        "learning_rate": metrics.get("lr"),
+        "tokens_seen": int(metrics.get("tokens", 0)),
+        "checkpoint_path": str(checkpoint.relative_to(ROOT)),
+        "checkpoint_size_bytes": checkpoint.stat().st_size,
+        "dataset_manifest": str(MANIFEST.relative_to(ROOT)),
+        "samples": samples,
+    }
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def publish_checkpoint(token: str | None) -> None:
+    phase("PUBLISH", "START | verified checkpoint -> checkpoints/latest.pt")
+    env = {"GIT_TERMINAL_PROMPT": "0"}
+    with github_auth_env(token) as auth:
+        env.update(auth)
+        run([sys.executable, "-m", "scripts.publish_checkpoint"], env=env)
+    phase("PUBLISH", "COMPLETE | checkpoint available to CHAD")
+
+
+def run_one(run_number: int, runs: int, device: str, max_chars: int, monitor_interval: int) -> None:
+    started = time.monotonic()
+    prepare_corpus(max_chars)
+    steps = target_steps()
+    run_dir = CHECKPOINTS / f"run-{run_number:03d}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint = run_dir / "checkpoint.pt"
+
+    command = [
+        sys.executable,
+        "-m",
+        "scripts.train",
+        "--config",
+        str(CONFIG.relative_to(ROOT)),
+        "--data",
+        str(CORPUS.relative_to(ROOT)),
+        "--checkpoint",
+        str(checkpoint.relative_to(ROOT)),
+        "--device",
+        device,
+        "--epochs",
+        "1000",
+        "--monitor-interval",
+        str(monitor_interval),
+    ]
+
+    metrics, _ = stream_training(command, run_number=run_number, runs=runs, steps=steps)
+    metrics["device"] = device
+    verify_checkpoint(checkpoint, steps)
+    samples = preview(checkpoint, device)
+    write_history(run_number, runs, checkpoint, metrics, samples, started, device)
+    publish_checkpoint(get_github_token())
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run LapisLLM Colab training")
+    parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--max-chars", type=int, default=200_000_000)
+    parser.add_argument("--max-records-per-source", type=int, default=0)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--monitor-interval", type=int, default=0)
+    return parser.parse_args()
 
 
 def main() -> int:
-    """Run Colab training with one non-interactive run."""
-    if len(sys.argv) == 1:
-        sys.argv.append("--runs")
-        sys.argv.append("1")
-    elif "--runs" not in sys.argv:
-        sys.argv.extend(["--runs", "1"])
+    args = parse_args()
+    if args.runs < 1:
+        raise SystemExit("--runs must be >= 1")
+    if args.max_chars < 1:
+        raise SystemExit("--max-chars must be >= 1")
+    if args.max_records_per_source < 0:
+        raise SystemExit("--max-records-per-source must be >= 0")
+    if args.monitor_interval < 0:
+        raise SystemExit("--monitor-interval must be >= 0")
 
-    _impl.train_one_run = train_one_run
-    return _impl.main()
+    print("\nLAPIS COLAB TRAINING", flush=True)
+    print("non-interactive | no notebook input | no training-time generation", flush=True)
+    print(f"runs={args.runs} | max_chars={args.max_chars:,} | monitor_interval={args.monitor_interval}", flush=True)
+
+    ensure_dependencies()
+    device = resolve_device(args.device)
+    if device == "cuda":
+        import torch
+        phase("GPU", f"READY | {torch.cuda.get_device_name(0)}")
+    else:
+        phase("GPU", "CPU")
+
+    done = completed_runs()
+    remaining = [n for n in range(1, args.runs + 1) if n not in done]
+    phase("PLAN", f"requested={args.runs} | completed={len(done)} | remaining={len(remaining)}")
+
+    for run_number in remaining:
+        run_one(
+            run_number=run_number,
+            runs=args.runs,
+            device=device,
+            max_chars=args.max_chars,
+            monitor_interval=args.monitor_interval,
+        )
+
+    phase("DONE", f"all requested runs completed | latest={ROOT / 'checkpoints' / 'latest.pt'}")
+    return 0
 
 
 if __name__ == "__main__":
