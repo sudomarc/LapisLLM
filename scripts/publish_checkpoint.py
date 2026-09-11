@@ -37,7 +37,7 @@ def verify_checkpoint(path: Path) -> dict:
 
     state = torch.load(path, map_location="cpu", weights_only=True)
     if "model_state_dict" not in state or "config" not in state:
-        raise RuntimeError("Checkpoint is missing model/config metadata")
+        raise RuntimeError("Checkpoint is missing model_state_dict or config metadata")
     if not isinstance(state["model_state_dict"], dict) or not state["model_state_dict"]:
         raise RuntimeError("Checkpoint model_state_dict is empty or invalid")
     return state
