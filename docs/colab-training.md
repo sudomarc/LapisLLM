@@ -32,7 +32,7 @@ preflight
   → checkpoint verification
   → post-training generation checks
   → training-history recording
-  → canonical checkpoint publication
+  → canonical inference-checkpoint publication
 ```
 
 A long-running phase must remain observable. The orchestrator emits explicit phase messages and periodic heartbeats when the child process is otherwise quiet. A heartbeat is diagnostic output only; it is never a prompt for input.
@@ -96,14 +96,21 @@ For example:
 
 ## Output and publication
 
-The runner writes training data under `training_data/`, verified run checkpoints under `checkpoints/colab-runs/`, and synchronizes the newest verified model to:
+The runner keeps two artifact classes separate:
 
 ```text
-checkpoints/latest.pt
-checkpoints/tokenizer/
+checkpoints/colab-runs/run-*/
+    checkpoint.pt          # full training/resume state; local training artifact
+    tokenizer/             # paired training tokenizer
+
+checkpoints/
+    latest.pt              # slim inference artifact for LapisRuntime / CHAD
+    tokenizer/             # paired runtime tokenizer
 ```
 
-A checkpoint is not considered publishable until its file, optimizer step, model/config metadata, tokenizer artifact, and tokenizer-version metadata pass verification. Training history is written only after the training process and checkpoint validation succeed.
+The full run checkpoint contains optimizer/scheduler/RNG state needed for trusted training resume. The canonical `checkpoints/latest.pt` is deliberately reduced to inference-required state: model weights, model configuration, tokenizer version metadata, and the inference format marker. This avoids distributing training-only optimizer state to external consumers.
+
+A checkpoint is not considered publishable until the source training checkpoint, paired tokenizer, model/config metadata, and tokenizer-version metadata pass verification. The published inference artifact is verified again after creation.
 
 The publication step refuses to proceed when unrelated local source changes are present. Git authentication failures fail clearly rather than opening an interactive password/token prompt.
 
@@ -115,7 +122,7 @@ To publish the newest locally available Colab checkpoint manually:
 lapis dev publish
 ```
 
-The command verifies that the checkpoint is readable and contains model/config metadata, updates the canonical `latest.pt` and tokenizer paths, commits only checkpoint changes, and pushes them to `origin/main`.
+The command verifies the full source checkpoint, creates the slim inference artifact at `checkpoints/latest.pt`, copies the matching tokenizer, verifies the published artifact, and pushes only the canonical inference artifact and tokenizer.
 
 GitHub write authentication must be configured in the Colab runtime before the training workflow can push changes.
 
