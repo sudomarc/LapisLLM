@@ -146,7 +146,8 @@ def corpus_valid(max_chars: int) -> bool:
 
 def prepare_corpus(args: argparse.Namespace) -> None:
     phase("CORPUS", "START")
-    if corpus_valid(args.max_chars):
+    effective_max_chars = 50_000 if args.smoke_test else args.max_chars
+    if corpus_valid(effective_max_chars):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         size = CORPUS.stat().st_size
         phase(
@@ -157,20 +158,19 @@ def prepare_corpus(args: argparse.Namespace) -> None:
         phase("MANIFEST", f"COMPLETE | {MANIFEST}")
         return
 
-    max_chars = 50_000 if args.smoke_test else args.max_chars
     command = [
         sys.executable,
         "scripts/build_colab_corpus.py",
         "--output", str(CORPUS.relative_to(ROOT)),
         "--manifest", str(MANIFEST.relative_to(ROOT)),
-        "--max-chars", str(max_chars),
+        "--max-chars", str(effective_max_chars),
     ]
     if args.max_records_per_source > 0:
         command += ["--max-records-per-source", str(args.max_records_per_source)]
     if args.smoke_test:
         command += ["--source", "wikipedia"]
     run_command(command)
-    if not corpus_valid(max_chars):
+    if not corpus_valid(effective_max_chars):
         raise RuntimeError("Corpus/manifest verification failed after corpus build.")
     phase("CORPUS", f"COMPLETE | {CORPUS.stat().st_size / 1024 / 1024:.1f} MiB")
     phase("MANIFEST", f"COMPLETE | {MANIFEST}")
@@ -509,7 +509,13 @@ def train_one_run(
 
 def publish_checkpoint_locally(checkpoint: Path) -> None:
     phase("PUBLISH", "CHECKPOINT | preparing canonical latest.pt")
-    command = [sys.executable, "-m", "scripts.publish_checkpoint", str(checkpoint.relative_to(ROOT)), "--no-push"]
+    command = [
+        sys.executable,
+        "-m",
+        "scripts.publish_checkpoint",
+        str(checkpoint.relative_to(ROOT)),
+        "--no-push",
+    ]
     run_command(command)
     phase("PUBLISH", "CHECKPOINT | canonical paths updated")
 
@@ -518,6 +524,9 @@ def git_push(token: str | None, smoke: bool) -> bool:
     if smoke:
         phase("GITHUB", "SKIPPED | smoke test")
         return True
+    if not token:
+        phase("GITHUB", "AUTHENTICATION MISSING | failing before modifying Git state")
+        raise RuntimeError("No GitHub credentials available for non-interactive Colab push.")
 
     status = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
@@ -549,7 +558,12 @@ def git_push(token: str | None, smoke: bool) -> bool:
     ]
     if pushable:
         phase("GITHUB", f"COMMIT | files={len(pushable)}")
-        subprocess.run(["git", "add", "training_history", "checkpoints"], cwd=ROOT, check=True, timeout=30)
+        subprocess.run(
+            ["git", "add", "training_history", "checkpoints"],
+            cwd=ROOT,
+            check=True,
+            timeout=30,
+        )
         staged = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
             cwd=ROOT,
@@ -567,37 +581,28 @@ def git_push(token: str | None, smoke: bool) -> bool:
             )
 
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "PYTHONUNBUFFERED": "1"}
-    if token:
-        import tempfile
-        import stat
+    import tempfile
+    import stat
 
-        with tempfile.TemporaryDirectory(prefix="lapis-git-auth-") as tmp:
-            askpass = Path(tmp) / "askpass.sh"
-            askpass.write_text(
-                "#!/bin/sh\n"
-                "case \"$1\" in\n"
-                "  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;\n"
-                "  *) printf '%s\\n' \"$LAPIS_GIT_TOKEN\" ;;\n"
-                "esac\n",
-                encoding="utf-8",
-            )
-            askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-            env.update(
-                {
-                    "GIT_ASKPASS": str(askpass),
-                    "LAPIS_GIT_TOKEN": token,
-                }
-            )
-            subprocess.run(
-                ["git", "push", "origin", "main"],
-                cwd=ROOT,
-                env=env,
-                check=True,
-                timeout=120,
-            )
-    else:
-        phase("GITHUB", "AUTHENTICATION MISSING | push will fail fast; no interactive credential prompt")
-        raise RuntimeError("No GitHub credentials available for non-interactive Colab push.")
+    with tempfile.TemporaryDirectory(prefix="lapis-git-auth-") as tmp:
+        askpass = Path(tmp) / "askpass.sh"
+        askpass.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;\n"
+            "  *) printf '%s\\n' \"$LAPIS_GIT_TOKEN\" ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        env.update({"GIT_ASKPASS": str(askpass), "LAPIS_GIT_TOKEN": token})
+        subprocess.run(
+            ["git", "push", "origin", "main"],
+            cwd=ROOT,
+            env=env,
+            check=True,
+            timeout=120,
+        )
 
     phase("GITHUB", "PUSH COMPLETE")
     return True
@@ -671,6 +676,7 @@ def main() -> int:
         phase("GITHUB", "SKIPPED | --no-push")
     else:
         token = get_github_token()
+        phase("GITHUB", "AUTHENTICATION READY")
         git_push(token, args.smoke_test)
 
     banner("LAPISLLM TRAINING COMPLETE")
