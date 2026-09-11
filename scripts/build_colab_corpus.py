@@ -59,6 +59,13 @@ def selected_sources(args: argparse.Namespace):
     return [item for item in DEFAULT_SOURCES if item[0] in requested]
 
 
+def allocate_source_budget(remaining_global: int, remaining_sources: int) -> int:
+    """Give the current source a fair share of the budget still available."""
+    if remaining_global < 0 or remaining_sources < 1:
+        raise ValueError("remaining_global must be >= 0 and remaining_sources must be >= 1")
+    return max(1, (remaining_global + remaining_sources - 1) // remaining_sources)
+
+
 def load_kwargs(dataset_id: str, config: str | None, split: str) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"path": dataset_id, "split": split, "streaming": True}
     if config:
@@ -248,7 +255,7 @@ def main() -> int:
                 break
             remaining_sources = len(sources) - index
             remaining_global = args.max_chars - total_chars
-            source_budget = max(1, (remaining_global + remaining_sources - 1) // remaining_sources)
+            source_budget = allocate_source_budget(remaining_global, remaining_sources)
 
             source_started = time.monotonic()
             print(
