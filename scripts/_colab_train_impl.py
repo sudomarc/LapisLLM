@@ -52,7 +52,7 @@ def format_duration(seconds: float | None) -> str:
     return f"{minutes}m {seconds:02d}s"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run observable LapisLLM Colab training")
     parser.add_argument("--runs", type=int, default=1, help="Total number of runs")
     parser.add_argument("--resume", action="store_true", help="Resume at the first incomplete run")
@@ -65,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--heartbeat-seconds", type=float, default=HEARTBEAT_SECONDS)
     parser.add_argument("--no-push", action="store_true", help="Do not push history/checkpoint outputs")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def get_github_token() -> str | None:
@@ -559,7 +559,13 @@ def git_push(token: str | None, smoke: bool) -> bool:
     if pushable:
         phase("GITHUB", f"COMMIT | files={len(pushable)}")
         subprocess.run(
-            ["git", "add", "training_history", "checkpoints"],
+            [
+                "git",
+                "add",
+                "training_history",
+                "checkpoints/latest.pt",
+                "checkpoints/tokenizer",
+            ],
             cwd=ROOT,
             check=True,
             timeout=30,
@@ -609,7 +615,7 @@ def git_push(token: str | None, smoke: bool) -> bool:
 
 
 def main() -> int:
-    args = parse_args()
+    args = parse_args(sys.argv[1:])
     if args.runs < 1:
         raise SystemExit("--runs must be >= 1")
     if args.monitor_interval < 0:
