@@ -153,3 +153,23 @@ def test_publish_verification_rejects_missing_model_state(tmp_path):
         assert "model_state_dict" in str(exc)
     else:
         raise AssertionError("missing model_state_dict was accepted")
+
+
+def test_git_push_requires_token_before_modifying_repository(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        colab,
+        "phase",
+        lambda _name, message: calls.append(message),
+    )
+
+    try:
+        colab.git_push(None, False)
+    except RuntimeError as exc:
+        assert "No GitHub credentials" in str(exc)
+    else:
+        raise AssertionError("missing GitHub credentials were accepted")
+
+    assert calls == [
+        "AUTHENTICATION MISSING | failing before modifying Git state"
+    ]
