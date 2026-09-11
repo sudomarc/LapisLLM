@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 import json
 from pathlib import Path
@@ -6,7 +8,6 @@ import torch
 
 from scripts import _colab_train_impl as colab
 from scripts import build_colab_corpus
-from scripts import colab_train
 from scripts import publish_checkpoint
 
 
@@ -83,7 +84,6 @@ def test_corpus_cache_requires_current_builder_contract(tmp_path, monkeypatch):
 
 
 def test_smoke_uses_its_effective_corpus_budget(monkeypatch):
-    monkeypatch.setattr("sys.argv", ["scripts.colab_train"])
     args = colab.parse_args()
     args.smoke_test = True
     args.max_chars = 200_000_000
@@ -158,13 +158,13 @@ def test_publish_verification_rejects_missing_model_state(tmp_path):
 def test_git_push_requires_token_before_modifying_repository(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        colab_train,
+        colab,
         "phase",
         lambda _name, message: calls.append(message),
     )
 
     try:
-        colab_train.git_push(None, False)
+        colab.git_push(None, False)
     except RuntimeError as exc:
         assert "No GitHub credentials" in str(exc)
     else:
