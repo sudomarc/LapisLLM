@@ -12,7 +12,7 @@ def test_publish_copies_verified_checkpoint_and_tokenizer(tmp_path, monkeypatch)
     tokenizer = source.parent / "tokenizer"
     tokenizer.mkdir()
     (tokenizer / "tokenizer.json").write_text("{}\n", encoding="utf-8")
-    torch.save({"model_state_dict": {}, "config": {}}, source)
+    torch.save({"model_state_dict": {"weight": torch.ones(1)}, "config": {}}, source)
 
     monkeypatch.setattr(publish_checkpoint, "CHECKPOINT_ROOT", checkpoint_root)
     monkeypatch.setattr(
@@ -30,4 +30,11 @@ def test_publish_copies_verified_checkpoint_and_tokenizer(tmp_path, monkeypatch)
 
     assert (checkpoint_root / "latest.pt").is_file()
     assert (checkpoint_root / "tokenizer" / "tokenizer.json").read_text(encoding="utf-8") == "{}\n"
-    assert Path(source).read_bytes() == (checkpoint_root / "latest.pt").read_bytes()
+    published = torch.load(
+        checkpoint_root / "latest.pt",
+        map_location="cpu",
+        weights_only=True,
+    )
+    assert published["checkpoint_format"] == "lapis-inference-v1"
+    assert published["model_state_dict"] == {"weight": torch.ones(1)}
+    assert published["config"] == {}
