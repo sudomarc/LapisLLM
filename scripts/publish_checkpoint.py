@@ -90,8 +90,6 @@ def publish(source: Path) -> None:
 
     try:
         torch.save(inference_state, temporary)
-        if LATEST_CHECKPOINT.exists():
-            LATEST_CHECKPOINT.unlink()
         temporary.replace(LATEST_CHECKPOINT)
     finally:
         temporary.unlink(missing_ok=True)
