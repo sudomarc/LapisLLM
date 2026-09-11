@@ -33,7 +33,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+        run: python -m pip install --upgrade pip && pip install -e ".[data,dev]"
 
       - name: Validate agent skill system
         run: python .agents/runtime/validate.py
@@ -103,7 +103,7 @@ jobs:
           cache: pip
 
       - name: Install package and audit tooling
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+        run: python -m pip install --upgrade pip && pip install -e ".[data,dev]"
 
       - name: Dependency vulnerability audit
         run: python -m pip_audit
