@@ -392,20 +392,22 @@ def write_history(
 
 
 def publish_outputs(token: str | None) -> None:
-    phase("PUBLISH", "START | checkpoint + training history")
-    auth: dict[str, str]
+    phase("PUBLISH", "START | training history + verified checkpoint")
     with github_auth_env(token) as auth:
-        run([sys.executable, "-m", "scripts.publish_checkpoint"], env=auth)
         status = run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             capture=True,
             env=auth,
         ).stdout.splitlines()
-        history = [line for line in status if line[3:].replace("\\", "/").startswith("training_history/")]
-        unrelated = [line for line in status if line not in history]
+        history = [
+            line
+            for line in status
+            if line[3:].replace("\\", "/").startswith("training_history/")
+        ]
+        unrelated = [line for line in status if line not in history and line.strip()]
         if unrelated:
             raise RuntimeError(
-                "Refusing to publish training history because unrelated local changes exist:\n"
+                "Refusing publication because unrelated local changes exist:\n"
                 + "\n".join(unrelated)
             )
         if history:
@@ -416,11 +418,14 @@ def publish_outputs(token: str | None) -> None:
                 env=auth,
             ).stdout.splitlines()
             staged_history = [
-                path for path in staged if path.replace("\\", "/").startswith("training_history/")
+                path
+                for path in staged
+                if path.replace("\\", "/").startswith("training_history/")
             ]
             if staged_history:
                 run(["git", "commit", "-m", "chore: save Colab training history"], env=auth)
                 run(["git", "push", "origin", "main"], env=auth)
+        run([sys.executable, "-m", "scripts.publish_checkpoint"], env=auth)
     phase("PUBLISH", f"COMPLETE | latest={LATEST_CHECKPOINT}")
 
 
@@ -491,7 +496,10 @@ def main() -> int:
         raise SystemExit("--monitor-interval must be >= 0")
 
     print("\nLAPIS COLAB TRAINING", flush=True)
-    print("non-interactive | no notebook input | no training-time generation by default", flush=True)
+    print(
+        "non-interactive | no notebook input | no training-time generation by default",
+        flush=True,
+    )
     print(
         f"runs={args.runs} | max_chars={args.max_chars:,} | "
         f"monitor_interval={args.monitor_interval}",
