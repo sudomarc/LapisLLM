@@ -240,11 +240,19 @@ def completed_runs() -> set[int]:
     return completed_run_numbers()
 
 
+def path_for_process(path: Path) -> str:
+    """Use repository-relative paths when possible, otherwise preserve the absolute path."""
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def verify_checkpoint(path: Path, expected_steps: int) -> None:
     """Validate a training checkpoint and its adjacent tokenizer metadata."""
     import torch
 
-    phase("CHECKPOINT", f"VERIFY | {path.relative_to(ROOT)}")
+    phase("CHECKPOINT", f"VERIFY | {path_for_process(path)}")
     if not path.is_file() or path.stat().st_size <= 0:
         raise RuntimeError(f"Checkpoint missing or empty: {path}")
     state = torch.load(path, map_location="cpu", weights_only=True)
@@ -382,7 +390,7 @@ def preview(checkpoint: Path, device: str) -> list[dict[str, str]]:
                     sys.executable,
                     "scripts/generate.py",
                     "--checkpoint",
-                    str(checkpoint.relative_to(ROOT)),
+                    path_for_process(checkpoint),
                     "--prompt",
                     prompt,
                     "--max-new-tokens",
@@ -434,7 +442,7 @@ def write_history(
         "perplexity": _finite(metrics.get("ppl")),
         "learning_rate": _finite(metrics.get("lr")),
         "tokens_seen": int(metrics.get("tokens", 0)),
-        "checkpoint_path": str(checkpoint.relative_to(ROOT)),
+        "checkpoint_path": path_for_process(checkpoint),
         "checkpoint_size_bytes": checkpoint.stat().st_size,
         "dataset_manifest": str(MANIFEST.relative_to(ROOT)),
         "samples": samples,
