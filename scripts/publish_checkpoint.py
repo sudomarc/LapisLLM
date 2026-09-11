@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a verified Lapis checkpoint to the repository for CHAD."""
+"""Publish a verified inference checkpoint for external runtime consumers."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ def run(*args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
         text=True,
         capture_output=capture,
         check=True,
+        timeout=120,
     )
 
 
@@ -36,7 +37,9 @@ def verify_checkpoint(path: Path) -> dict:
 
     state = torch.load(path, map_location="cpu", weights_only=True)
     if "model_state_dict" not in state or "config" not in state:
-        raise RuntimeError("Checkpoint is missing model/config metadata")
+        raise RuntimeError("Checkpoint is missing model_state_dict or config metadata")
+    if not isinstance(state["model_state_dict"], dict) or not state["model_state_dict"]:
+        raise RuntimeError("Checkpoint model_state_dict is empty or invalid")
     return state
 
 
@@ -49,7 +52,11 @@ def find_source(path: Path | None) -> Path:
 
     run_root = CHECKPOINT_ROOT / "colab-runs"
     candidates = (
-        sorted(run_root.glob("run-*/checkpoint.pt"), key=lambda item: item.stat().st_mtime, reverse=True)
+        sorted(
+            run_root.glob("run-*/checkpoint.pt"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
         if run_root.is_dir()
         else []
     )
@@ -66,14 +73,38 @@ def tokenizer_source(checkpoint: Path) -> Path:
 
 
 def publish(source: Path) -> None:
-    verify_checkpoint(source)
+    """Create the smaller inference artifact consumed by LapisRuntime/CHAD."""
+    state = verify_checkpoint(source)
     tokenizer = tokenizer_source(source)
 
+    inference_state = {
+        "model_state_dict": state["model_state_dict"],
+        "config": state["config"],
+        "tokenizer_version": state.get("tokenizer_version"),
+        "checkpoint_format": "lapis-inference-v1",
+    }
+
     CHECKPOINT_ROOT.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, LATEST_CHECKPOINT)
+    temporary = LATEST_CHECKPOINT.with_suffix(".tmp")
+    import torch
+
+    try:
+        torch.save(inference_state, temporary)
+        temporary.replace(LATEST_CHECKPOINT)
+    finally:
+        temporary.unlink(missing_ok=True)
+
     if LATEST_TOKENIZER.exists():
         shutil.rmtree(LATEST_TOKENIZER)
     shutil.copytree(tokenizer, LATEST_TOKENIZER)
+
+    published = verify_checkpoint(LATEST_CHECKPOINT)
+    if published.get("checkpoint_format") != "lapis-inference-v1":
+        raise RuntimeError("Published checkpoint format marker is missing")
+    print(
+        f"Inference checkpoint published locally: {LATEST_CHECKPOINT} "
+        f"({LATEST_CHECKPOINT.stat().st_size / 1024 / 1024:.1f} MiB)"
+    )
 
 
 def push(commit_message: str) -> bool:
@@ -81,7 +112,7 @@ def push(commit_message: str) -> bool:
     protected = [
         line
         for line in current
-        if not line[3:].replace("\\", "/").startswith("checkpoints/")
+        if not line[3:].lstrip().replace("\\", "/").startswith("checkpoints/")
     ]
     if protected:
         raise RuntimeError(
@@ -97,12 +128,12 @@ def push(commit_message: str) -> bool:
 
     run("git", "commit", "-m", commit_message)
     run("git", "push", "origin", "main")
-    print("Checkpoint published to origin/main.")
+    print("Inference checkpoint published to origin/main.")
     return True
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Publish a verified Lapis checkpoint")
+    parser = argparse.ArgumentParser(description="Publish a verified Lapis inference checkpoint")
     parser.add_argument("checkpoint", nargs="?", type=Path)
     parser.add_argument("--no-push", action="store_true")
     args = parser.parse_args()
@@ -111,7 +142,7 @@ def main() -> int:
     publish(source)
     print(f"Published checkpoint: {LATEST_CHECKPOINT}")
     if not args.no_push:
-        push("chore: publish Lapis checkpoint")
+        push("chore: publish Lapis inference checkpoint")
     return 0
 
 

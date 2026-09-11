@@ -2,6 +2,23 @@
 
 All notable changes to LapisLLM are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Removed interactive run-count input from the canonical Colab training workflow.
+- Disabled in-training generated-text sampling by default so optimizer throughput is not consumed by repeated inference passes.
+- Fixed Colab smoke-test corpus cache validation to use its actual 50,000-character budget.
+- Distributed the Colab corpus character budget across configured sources so the first source cannot starve later sources.
+- Added bounded Hugging Face Hub request timeouts to complement source retries.
+- Made missing Colab GitHub authentication fail fast instead of waiting for interactive credentials.
+- Separated full training/resume checkpoints from the slim inference checkpoint published for `LapisRuntime` and CHAD.
+
+### Added
+
+- Added regression coverage for the non-interactive Colab contract, corpus budgeting, stale-cache invalidation, smoke-test budget, and checkpoint artifact separation.
+- Added a repository documentation gate requiring relevant documentation and applicable agent skills to be read before every repository change.
+
 ## [0.2.0] - 2026-09-08
 
 ### Fixed
@@ -48,35 +65,3 @@ All notable changes to LapisLLM are documented here.
 
 - Reworked the README into a model/project overview with explicit architecture, status, limitations, validation philosophy, and roadmap sections.
 - Removed unsupported claims about large-scale training, GGUF export, KV-cache maturity, and production readiness.
-
-### Validation status
-
-CI covers automated correctness and lint checks. The release does **not** claim benchmark quality or general-purpose language capability. The next milestone is validation through tiny-dataset overfitting, held-out loss/perplexity, deterministic checkpoint tests, and generation regression tests.
-
-### Not yet implemented
-
-- Exact mid-epoch data-loader/sampler replay.
-- Mixed-precision training.
-- Distributed training.
-- Efficient KV-cache generation.
-- Large-scale pretraining.
-- Comprehensive benchmark evaluation.
-- Production-grade web-scale data processing.
-
----
-
-## [0.1.0] - 2026-09-06
-
-### Initial development release
-
-- Initial LapisLLM repository structure.
-- Decoder-only Transformer implementation.
-- Configurable YAML model and training configurations.
-- Tokenizer training and persistence.
-- Data cleaning, filtering, packing, and manifest utilities.
-- Training, evaluation, generation, chat, and local serving entry points.
-- Initial test and CI infrastructure.
-
----
-
-For the current state of the project, see [`README.md`](README.md).

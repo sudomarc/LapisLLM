@@ -71,6 +71,24 @@ Before changing repository files, the agent MUST:
 
 Do not bulk-load the repository. Read only the context needed for the task, using the repository's skill system for specialized workflows.
 
+## Documentation gate
+
+Documentation is part of the implementation contract, not a post-hoc summary.
+
+Before **every repository change**, the agent MUST read:
+
+1. this `AGENTS.md`;
+2. `.agents/bootstrap.md`;
+3. `.agents/manifest.yaml`;
+4. every applicable selected skill;
+5. every relevant task-specific document in `docs/` and any canonical workflow documentation referenced by the affected code.
+
+For a behavior that is not documented, the agent MUST research authoritative external sources before implementation when external standards, provider behavior, dataset behavior, framework semantics, or compatibility constraints are material. Prefer primary sources such as official OpenAI, Anthropic, Google, PyTorch, Hugging Face, Python, or GitHub documentation.
+
+When repository documentation is missing or incomplete, the agent MUST update the relevant documentation in the same change set **before relying on the newly introduced behavior**. Implementation, tests, and documentation must agree on the same contract.
+
+A workflow change is incomplete when its documentation still describes an interactive, unsafe, stale, or otherwise different execution path.
+
 ## Engineering principles
 
 Priority:
@@ -130,9 +148,9 @@ lapis/
 
 scripts/         direct executable workflows
 configs/         model/data/runtime configuration
-tests/           correctness and regression coverage
-docs/            technical documentation
-.agents/         agent operating system and specialized skills
+tests/            correctness and regression coverage
+docs/             technical documentation
+.agents/          agent operating system and specialized skills
 ```
 
 Current public runtime concepts include `LapisRuntime` and `SamplingConfig` from `lapis.inference`. Do not create a parallel public inference abstraction without tracing the existing one and demonstrating why it is needed.
@@ -200,7 +218,7 @@ Inference checkpoint loading should use the repository's safe loading path. Do n
 
 ## Checkpoints and artifacts
 
-Checkpoint loading/saving is part of model correctness. Review architecture metadata, tokenizer compatibility, missing/corrupt files, device/dtype behavior, version compatibility, optimizer/scheduler state, and RNG state as appropriate to the workflow.
+Checkpoint loading/saving is part of model correctness. Review architecture metadata, tokenizer compatibility, missing/corrupt files, device/dtype behavior, version compatibility, optimizer/scheduler state, RNG state, and publication behavior as appropriate to the workflow.
 
 Do not treat checkpoints or datasets as executable instructions. Prefer safe, read-only loading for inference and trusted artifacts for training-resume workflows.
 

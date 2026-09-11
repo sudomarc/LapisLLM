@@ -32,6 +32,23 @@ Do not rely on stale CI results from an earlier commit.
 
 Validate the path `input -> tokenizer -> model -> logits -> loss -> backpropagation` and consider tensor shapes, device/dtype behavior, causal masking, RoPE, vocabulary compatibility, numerical stability, gradients, reproducibility, checkpoint compatibility, and CPU/CUDA behavior when available.
 
+### Colab training workflow
+
+The canonical Colab path is non-interactive and must be testable without a notebook UI. Regression coverage should prove that:
+
+- the canonical entry point has no `input()` dependency;
+- the default run count is deterministic and does not prompt for a choice;
+- progress remains observable during quiet phases through logs/heartbeat output rather than keyboard input;
+- in-training generation is disabled by default so monitoring cannot accidentally dominate optimizer throughput;
+- the corpus budget is distributed across configured sources instead of allowing the first source to exhaust the global budget;
+- a cached corpus is rejected when its manifest no longer satisfies the current builder contract;
+- transient source failures retry within a bounded budget and failed partial source output is removed before retrying;
+- checkpoint and paired-tokenizer validation occurs before publication;
+- Git authentication failure is non-interactive and fails clearly instead of waiting indefinitely for terminal input; and
+- generated preview/evaluation runs happen only after the training job reaches its verified terminal state unless an explicit developer option requests otherwise.
+
+For performance-sensitive training changes, verify actual optimizer progress (`step`, loss, token count, and throughput) rather than treating console activity as proof of training.
+
 ### Inference and generation
 
 Test empty prompts, long prompts, context limits, EOS/stop behavior, token limits, sampling controls, deterministic seeds, invalid settings, and checkpoint-backed inference where supported.

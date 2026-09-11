@@ -1,28 +1,36 @@
 #!/usr/bin/env python3
-"""Stable, non-interactive Colab entry point for LapisLLM training."""
+"""Canonical non-interactive Colab entry point for LapisLLM.
+
+This module preserves the stable public helper surface while delegating the
+workflow implementation to ``scripts._colab_train_impl``.
+"""
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from scripts import _colab_train_impl as _impl
 
+CONFIG = _impl.CONFIG
+SMOKE_CONFIG = _impl.SMOKE_CONFIG
+CORPUS = _impl.CORPUS
+MANIFEST = _impl.MANIFEST
 HISTORY = _impl.HISTORY
+CHECKPOINTS = _impl.CHECKPOINTS
 METRIC_RE = _impl.METRIC_RE
 TOKEN_RE = _impl.TOKEN_RE
 format_duration = _impl.format_duration
+banner = _impl.banner
+phase = _impl.phase
+ensure_dependencies = _impl.ensure_dependencies
+check_gpu = _impl.check_gpu
+train_one_run = _impl.train_one_run
+git_push = _impl.git_push
 get_github_token = _impl.get_github_token
+parse_args = _impl.parse_args
+main = _impl.main
 
 
 def completed_run_numbers() -> set[int]:
+    """Preserve the stable helper API while honoring patched module globals."""
     original = _impl.HISTORY
     _impl.HISTORY = HISTORY
     try:
@@ -31,95 +39,58 @@ def completed_run_numbers() -> set[int]:
         _impl.HISTORY = original
 
 
-def _stage_latest_checkpoint() -> None:
-    subprocess.run(
-        [sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"],
-        cwd=ROOT,
-        check=True,
-    )
-
-
-def train_one_run(run_number: int, total_runs: int, args, device: str, config: Path) -> dict:
-    """Run the real trainer directly instead of the broken Typer module invocation."""
-    run_dir = _impl.CHECKPOINTS / f"run-{run_number:03d}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = run_dir / "checkpoint.pt"
-    monitor_log = run_dir / "learning_monitor.jsonl"
-    steps = _impl.target_steps(config)
-    _impl.phase("RUN", f"{run_number} / {total_runs}")
-    _impl.phase("RUN", f"target_steps={steps:,} | checkpoint={checkpoint}")
-    _impl.phase("TOKENIZER", "STARTING | trainer will reuse a compatible on-disk tokenizer when available")
-    _impl.phase("DATASET", "STARTING | corpus -> token IDs -> fixed-length samples")
-    _impl.phase("MODEL", "STARTING | initialization and device placement occur inside scripts.train")
-    _impl.phase("TRAINING", "START")
-
-    command = [
-        sys.executable,
-        "-m",
-        "scripts.train",
-        "--config", str(config.relative_to(ROOT)),
-        "--data", str(_impl.CORPUS.relative_to(ROOT)),
-        "--checkpoint", str(checkpoint.relative_to(ROOT)),
-        "--device", device,
-        "--epochs", "1000",
-        "--monitor-interval", str(args.monitor_interval),
-        "--monitor-sample-tokens", str(args.monitor_sample_tokens),
-        "--monitor-log", str(monitor_log.relative_to(ROOT)),
-    ]
-    if args.monitor_prompts:
-        command += ["--monitor-prompts", args.monitor_prompts]
-
-    started = time.monotonic()
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-    )
+def corpus_valid(max_chars: int) -> bool:
+    """Preserve the stable helper API while honoring patched module globals."""
+    original_corpus, original_manifest = _impl.CORPUS, _impl.MANIFEST
+    _impl.CORPUS, _impl.MANIFEST = CORPUS, MANIFEST
     try:
-        metrics = _impl.monitor_child(
-            process,
-            run_number=run_number,
-            total_runs=total_runs,
-            target_steps=steps,
-            started=started,
-            heartbeat_seconds=args.heartbeat_seconds,
-        )
-        metrics["device"] = device
-        _impl.phase("TRAINING", f"COMPLETE | run={run_number}/{total_runs} | elapsed={format_duration(time.monotonic() - started)}")
-        _impl.verify_checkpoint(checkpoint, steps)
-        prompts = tuple(
-            item.strip()
-            for item in (
-                args.monitor_prompts
-                or "Explain a transformer.||Write a Python function to reverse a string.||Explique les réseaux de neurones."
-            ).split("||")
-            if item.strip()
-        )
-        samples = _impl.generate_preview(checkpoint, device, prompts)
-        _impl.write_history(run_number, total_runs, checkpoint, metrics, samples, started, config)
-        _stage_latest_checkpoint()
-        return metrics
-    except Exception as exc:
-        _impl.write_failure_history(run_number, total_runs, exc, started)
-        _impl.phase("RUN", f"FAILED | run={run_number}/{total_runs} | error={exc}")
-        raise
+        return _impl.corpus_valid(max_chars)
+    finally:
+        _impl.CORPUS, _impl.MANIFEST = original_corpus, original_manifest
 
 
-def main() -> int:
-    """Run Colab training with one non-interactive run."""
-    if len(sys.argv) == 1:
-        sys.argv.append("--runs")
-        sys.argv.append("1")
-    elif "--runs" not in sys.argv:
-        sys.argv.extend(["--runs", "1"])
+def prepare_corpus(args) -> None:
+    """Preserve the stable helper API while honoring patched module globals."""
+    original_corpus = _impl.CORPUS
+    original_manifest = _impl.MANIFEST
+    original_validator = _impl.corpus_valid
+    original_phase = _impl.phase
+    _impl.CORPUS = CORPUS
+    _impl.MANIFEST = MANIFEST
+    _impl.corpus_valid = corpus_valid
+    _impl.phase = phase
+    try:
+        _impl.prepare_corpus(args)
+    finally:
+        _impl.CORPUS = original_corpus
+        _impl.MANIFEST = original_manifest
+        _impl.corpus_valid = original_validator
+        _impl.phase = original_phase
 
-    _impl.train_one_run = train_one_run
-    return _impl.main()
+
+__all__ = [
+    "CHECKPOINTS",
+    "CONFIG",
+    "CORPUS",
+    "HISTORY",
+    "MANIFEST",
+    "METRIC_RE",
+    "SMOKE_CONFIG",
+    "TOKEN_RE",
+    "banner",
+    "check_gpu",
+    "completed_run_numbers",
+    "corpus_valid",
+    "ensure_dependencies",
+    "format_duration",
+    "get_github_token",
+    "git_push",
+    "main",
+    "parse_args",
+    "phase",
+    "prepare_corpus",
+    "train_one_run",
+]
 
 
 if __name__ == "__main__":

@@ -18,8 +18,11 @@ from typing import Any
 
 # FineWeb-Edu currently uses Hugging Face Hub/Xet-backed Parquet shards. Keep the
 # Colab corpus path on the standard Hub HTTP transport unless the caller already
-# selected another setting. This also has to happen before importing datasets.
+# selected another setting. These timeouts also prevent a broken network path
+# from appearing idle indefinitely.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
 
 from datasets import load_dataset
 
@@ -29,6 +32,7 @@ DEFAULT_SOURCES = (
     ("openwebmath", "open-web-math/open-web-math", None, "train", "text"),
 )
 
+CORPUS_CONTRACT_VERSION = "lapis-colab-corpus-v2"
 PROGRESS_EVERY_RECORDS = 250
 PROGRESS_EVERY_SECONDS = 5.0
 SOURCE_RETRIES = 3
@@ -47,13 +51,19 @@ def parse_args() -> argparse.Namespace:
 
 def clean_text(value: str) -> str:
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    value = re.sub(r"\n{3,}", "\n\n", value)
-    return value.strip()
+    return re.sub(r"\n{3,}", "\n\n", value).strip()
 
 
 def selected_sources(args: argparse.Namespace):
     requested = set(args.source or [item[0] for item in DEFAULT_SOURCES])
     return [item for item in DEFAULT_SOURCES if item[0] in requested]
+
+
+def allocate_source_budget(remaining_global: int, remaining_sources: int) -> int:
+    """Give the current source a fair share of the budget still available."""
+    if remaining_global < 0 or remaining_sources < 1:
+        raise ValueError("remaining_global must be >= 0 and remaining_sources must be >= 1")
+    return max(1, (remaining_global + remaining_sources - 1) // remaining_sources)
 
 
 def load_kwargs(dataset_id: str, config: str | None, split: str) -> dict[str, Any]:
@@ -131,12 +141,12 @@ def write_source(
     field: str,
     total_chars: int,
     max_chars: int,
+    source_char_limit: int,
     max_records_per_source: int,
     started: float,
 ) -> tuple[int, int, int]:
-    """Write one source, retrying the whole source without duplicating output."""
+    """Write one source within its current share of the global budget."""
     source_start = handle.tell()
-    last_error: Exception | None = None
 
     for attempt in range(1, SOURCE_RETRIES + 1):
         handle.seek(source_start)
@@ -153,9 +163,12 @@ def write_source(
                 text = clean_text(value)
                 if not text:
                     continue
-                remaining = max_chars - total_chars
+                remaining_global = max_chars - total_chars
+                remaining_source = source_char_limit - chars
+                remaining = min(remaining_global, remaining_source)
                 if remaining <= 0:
                     break
+
                 block = f"\n\n===== {source_id} =====\n\n{text}\n"
                 if len(block) > remaining:
                     block = block[:remaining]
@@ -185,25 +198,25 @@ def write_source(
 
             return records, chars, total_chars
         except Exception as exc:
-            last_error = exc
             print(
                 f"[CORPUS] SOURCE FAILED | source={source_id} | "
                 f"attempt={attempt}/{SOURCE_RETRIES} | error={exc}",
                 flush=True,
             )
-            # Drop any partial source output before retrying from the source start.
             handle.seek(source_start)
             handle.truncate()
             total_chars -= chars
             if attempt < SOURCE_RETRIES:
                 delay = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                print(f"[CORPUS] RETRYING SOURCE | source={source_id} | sleep={delay:.1f}s", flush=True)
+                print(
+                    f"[CORPUS] RETRYING SOURCE | source={source_id} | sleep={delay:.1f}s",
+                    flush=True,
+                )
                 time.sleep(delay)
             else:
                 raise
 
-    assert last_error is not None
-    raise last_error
+    raise RuntimeError(f"Source exhausted retry budget: {source_id}")
 
 
 def main() -> int:
@@ -215,6 +228,10 @@ def main() -> int:
 
     output = Path(args.output)
     manifest_path = Path(args.manifest)
+    sources = selected_sources(args)
+    if not sources:
+        raise SystemExit("At least one corpus source must be selected")
+
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -226,20 +243,25 @@ def main() -> int:
 
     print(
         f"[CORPUS] Starting | target={format_size(args.max_chars)} | "
-        f"sources={', '.join(item[0] for item in selected_sources(args))} | "
+        f"sources={', '.join(item[0] for item in sources)} | "
+        f"contract={CORPUS_CONTRACT_VERSION} | "
         f"xet={'disabled' if os.environ.get('HF_HUB_DISABLE_XET', '').lower() in {'1', 'true', 'yes', 'on'} else 'enabled'}",
         flush=True,
     )
 
     with output.open("w", encoding="utf-8", newline="\n") as handle:
-        for source_id, dataset_id, config, split, field in selected_sources(args):
+        for index, (source_id, dataset_id, config, split, field) in enumerate(sources):
             if total_chars >= args.max_chars:
                 break
+            remaining_sources = len(sources) - index
+            remaining_global = args.max_chars - total_chars
+            source_budget = allocate_source_budget(remaining_global, remaining_sources)
 
             source_started = time.monotonic()
             print(
                 f"[CORPUS] Loading source: {source_id} "
-                f"({dataset_id}, config={config or 'default'}, split={split})",
+                f"({dataset_id}, config={config or 'default'}, split={split}) | "
+                f"budget={format_size(source_budget)}",
                 flush=True,
             )
             try:
@@ -252,6 +274,7 @@ def main() -> int:
                     field=field,
                     total_chars=total_chars,
                     max_chars=args.max_chars,
+                    source_char_limit=source_budget,
                     max_records_per_source=args.max_records_per_source,
                     started=started,
                 )
@@ -270,6 +293,7 @@ def main() -> int:
                     "config": config,
                     "split": split,
                     "field": field,
+                    "budget_chars": source_budget,
                     "records_written": records,
                     "chars_written": chars,
                     "elapsed_seconds": time.monotonic() - source_started,
@@ -289,6 +313,7 @@ def main() -> int:
     manifest = {
         "project": "LapisLLM",
         "builder": "scripts/build_colab_corpus.py",
+        "contract_version": CORPUS_CONTRACT_VERSION,
         "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "max_chars": args.max_chars,
         "actual_chars": total_chars,
@@ -296,6 +321,8 @@ def main() -> int:
         "source_order": seen_sources,
         "source_errors": source_errors,
         "hf_hub_disable_xet": os.environ.get("HF_HUB_DISABLE_XET", ""),
+        "hf_hub_etag_timeout": os.environ.get("HF_HUB_ETAG_TIMEOUT", ""),
+        "hf_hub_download_timeout": os.environ.get("HF_HUB_DOWNLOAD_TIMEOUT", ""),
         "output": str(output),
     }
     manifest_path.write_text(
