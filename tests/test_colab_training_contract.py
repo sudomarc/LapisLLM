@@ -1,13 +1,10 @@
-from __future__ import annotations
-
-import ast
-import json
 from pathlib import Path
 
 import torch
 
 from scripts import _colab_train_impl as colab
 from scripts import build_colab_corpus
+from scripts import colab_train
 from scripts import publish_checkpoint
 
 
@@ -84,6 +81,7 @@ def test_corpus_cache_requires_current_builder_contract(tmp_path, monkeypatch):
 
 
 def test_smoke_uses_its_effective_corpus_budget(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["scripts.colab_train"])
     args = colab.parse_args()
     args.smoke_test = True
     args.max_chars = 200_000_000
