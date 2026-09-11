@@ -27,10 +27,12 @@ data = [
 ]
 dev = [
     "coverage>=7.16.0",
+    "datasets>=5.0.1",
     "numpy>=2.0.0,<3.0.0",
     "pip-audit>=2.10.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "requests>=2.34.2",
     "ruff>=0.16.6",
 ]
 
