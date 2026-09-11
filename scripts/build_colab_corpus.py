@@ -21,8 +21,6 @@ from typing import Any
 # selected another setting. This also has to happen before importing datasets.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-from datasets import load_dataset
-
 DEFAULT_SOURCES = (
     ("fineweb_edu", "HuggingFaceFW/fineweb-edu", "sample-10BT", "train", "text"),
     ("wikipedia", "wikimedia/wikipedia", "20231101.fr", "train", "text"),
@@ -98,6 +96,8 @@ def print_progress(
 
 def load_source(source_id: str, dataset_id: str, config: str | None, split: str):
     """Open one streaming source with a bounded retry budget."""
+    from datasets import load_dataset
+
     last_error: Exception | None = None
     for attempt in range(1, SOURCE_RETRIES + 1):
         try:
