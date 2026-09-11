@@ -43,7 +43,7 @@ The normal Colab path does **not** run generated-text samples inside the optimiz
 
 This separation matters because generation is additional model inference work and must not accidentally turn a training run into a repeated train-plus-inference loop. The default Colab path therefore prioritizes optimizer throughput and continuous progress reporting.
 
-The training path for file-backed corpora is memory-bounded: the corpus is not loaded into one Python string, tokenized samples are not all materialized in RAM, and the DataLoader consumes fixed-length sequences incrementally from the file. Hugging Face documents `streaming=True` as progressive iteration without downloading the complete dataset, and PyTorch documents iterable-style datasets/DataLoaders as a supported pattern for iterative training workloads.
+The current trainer is **not memory-bounded or file-streaming**. The Colab path invokes `scripts.train`, which reads the complete corpus into Python, tokenizes it into an in-memory list, and materializes samples in the map-style `TextDataset` before `DataLoader` shuffling. The documentation must not claim streaming behavior until the trainer itself implements an iterable/streaming dataset path.
 
 ## Corpus composition and provenance
 
