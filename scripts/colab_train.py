@@ -444,58 +444,78 @@ def write_history(
     )
 
 
-def publish_outputs(token: str | None) -> None:
-    """Publish the verified checkpoint before pushing completed training history."""
-    phase("PUBLISH", "START | training history + verified checkpoint")
+def _status_unrelated(status: list[str], allowed_prefixes: tuple[str, ...]) -> list[str]:
+    """Return status entries outside the publication-owned path prefixes."""
+    return [
+        line
+        for line in status
+        if line.strip() and not line[3:].replace("\\", "/").startswith(allowed_prefixes)
+    ]
+
+
+def publish_checkpoint(token: str | None) -> None:
+    """Verify, stage, commit, and push the checkpoint before run history is completed."""
+    phase("PUBLISH", "CHECKPOINT | START")
     with github_auth_env(token) as auth:
         status = run(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             capture=True,
             env=auth,
         ).stdout.splitlines()
-        allowed_prefixes = ("training_history/", "checkpoints/")
-        unrelated = [
-            line
-            for line in status
-            if line.strip() and not line[3:].replace("\\", "/").startswith(allowed_prefixes)
-        ]
+        unrelated = _status_unrelated(status, ("checkpoints/", "training_history/"))
         if unrelated:
             raise RuntimeError(
-                "Refusing publication because unrelated local changes exist:\n"
+                "Refusing checkpoint publication because unrelated local changes exist:\n"
                 + "\n".join(unrelated)
             )
-
         run([sys.executable, "-m", "scripts.publish_checkpoint", "--no-push"], env=auth)
         run(["git", "add", "checkpoints"], env=auth)
-        staged_checkpoint = run(
+        staged = run(
             ["git", "diff", "--cached", "--name-only"],
             capture=True,
             env=auth,
         ).stdout.splitlines()
         checkpoint_paths = [
             path
-            for path in staged_checkpoint
+            for path in staged
             if path.replace("\\", "/").startswith("checkpoints/")
         ]
         if checkpoint_paths:
             run(["git", "commit", "-m", "chore: publish Lapis checkpoint"], env=auth)
             run(["git", "push", "origin", "main"], env=auth)
+    phase("PUBLISH", "CHECKPOINT | COMPLETE")
 
+
+def publish_history(token: str | None) -> None:
+    """Commit and push completed run history after checkpoint publication succeeds."""
+    phase("PUBLISH", "HISTORY | START")
+    with github_auth_env(token) as auth:
+        status = run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            capture=True,
+            env=auth,
+        ).stdout.splitlines()
+        unrelated = _status_unrelated(status, ("training_history/",))
+        if unrelated:
+            raise RuntimeError(
+                "Refusing history publication because unrelated local changes exist:\n"
+                + "\n".join(unrelated)
+            )
         run(["git", "add", "training_history"], env=auth)
         staged = run(
             ["git", "diff", "--cached", "--name-only"],
             capture=True,
             env=auth,
         ).stdout.splitlines()
-        staged_history = [
+        history_paths = [
             path
             for path in staged
             if path.replace("\\", "/").startswith("training_history/")
         ]
-        if staged_history:
+        if history_paths:
             run(["git", "commit", "-m", "chore: save Colab training history"], env=auth)
             run(["git", "push", "origin", "main"], env=auth)
-    phase("PUBLISH", f"COMPLETE | latest={LATEST_CHECKPOINT}")
+    phase("PUBLISH", "HISTORY | COMPLETE")
 
 
 def run_one(
@@ -507,7 +527,7 @@ def run_one(
     monitor_interval: int,
     smoke_test: bool = False,
 ) -> None:
-    """Execute, verify, preview, and publish one training run."""
+    """Execute, verify, preview, publish, and record one training run."""
     started = time.monotonic()
     prepare_corpus(max_chars, max_records_per_source, smoke_test=smoke_test)
     steps = target_steps()
@@ -536,8 +556,10 @@ def run_one(
     metrics["device"] = device
     verify_checkpoint(checkpoint, steps)
     samples = preview(checkpoint, device)
-    publish_outputs(get_github_token())
+    token = get_github_token()
+    publish_checkpoint(token)
     write_history(run_number, runs, checkpoint, metrics, samples, started, device)
+    publish_history(token)
 
 
 def parse_args() -> argparse.Namespace:
@@ -593,7 +615,7 @@ def main() -> int:
     else:
         phase("GPU", "CPU")
 
-    done = completed_runs() if args.resume or True else set()
+    done = completed_runs() if args.resume else set()
     remaining = [number for number in range(1, args.runs + 1) if number not in done]
     phase("PLAN", f"requested={args.runs} | completed={len(done)} | remaining={len(remaining)}")
 
