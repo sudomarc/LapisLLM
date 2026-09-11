@@ -56,7 +56,7 @@ def completed_run_numbers() -> set[int]:
 
 
 def git_push(token: str | None, smoke: bool) -> bool:
-    """Publish only training history and canonical inference checkpoint outputs."""
+    """Publish history and canonical inference outputs without staging run checkpoints."""
     if smoke:
         phase("GITHUB", "SKIPPED | smoke test")
         return True
@@ -73,7 +73,8 @@ def git_push(token: str | None, smoke: bool) -> bool:
         timeout=30,
     )
     status = result.stdout.splitlines()
-    allowed_prefixes = (
+    allowed_change_prefixes = ("training_history/", "checkpoints/")
+    pushable_prefixes = (
         "training_history/",
         "checkpoints/latest.pt",
         "checkpoints/tokenizer/",
@@ -84,8 +85,10 @@ def git_push(token: str | None, smoke: bool) -> bool:
         path = line[3:].lstrip().replace("\\", "/") if len(line) >= 4 else ""
         if not path:
             continue
-        if path.startswith(allowed_prefixes):
+        if path.startswith(pushable_prefixes):
             pushable.append(path)
+        elif path.startswith(allowed_change_prefixes):
+            continue
         else:
             protected.append(line)
     if protected:
