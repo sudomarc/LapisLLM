@@ -1,0 +1,7 @@
+# One explicitly trusted public v3 onion URL per line.
+# The collector does not discover, search, or crawl onion services.
+# Copy this file to onion_sources.txt locally and add sources you are
+# authorized to collect and whose content is appropriate for your dataset.
+#
+# Example format only (not a live source):
+# https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/
