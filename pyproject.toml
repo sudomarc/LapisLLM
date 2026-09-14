@@ -45,6 +45,7 @@ evaluate = "scripts.evaluate:main"
 generate = "scripts.generate:main"
 serve = "scripts.serve:main"
 download_datasets = "scripts.download_datasets:main"
+fetch_onion_training_data = "scripts.fetch_onion_training_data:main"
 
 [tool.poetry]
 packages = [
