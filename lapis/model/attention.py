@@ -39,9 +39,9 @@ class CausalSelfAttention(nn.Module):
             .reshape(batch, kv_heads * repeats, seq_len, head_dim)
         )
 
-    def forward(self, x, mask=None, freqs_cis=None):
+    def forward(self, x, mask=None, freqs_cis=None, kv_cache=None, start_pos=0):
         batch, seq_len, _ = x.shape
-        if seq_len > self.max_position_embeddings:
+        if start_pos + seq_len > self.max_position_embeddings:
             raise ValueError("sequence length exceeds max_position_embeddings")
 
         q = self.q_proj(x).view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -53,25 +53,34 @@ class CausalSelfAttention(nn.Module):
                 self.head_dim, self.max_position_embeddings, self.rope_theta
             ).to(device=x.device, dtype=torch.complex64)
         else:
-            # Module.to(dtype=...) also casts registered buffers. RoPE frequencies
-            # are represented as complex cis values and must retain that dtype.
             freqs_cis = freqs_cis.to(device=x.device, dtype=torch.complex64)
 
-        q, k = apply_rotary_pos_emb(q, k, freqs_cis)
+        freqs_cis_step = freqs_cis[start_pos : start_pos + seq_len]
+        q, k = apply_rotary_pos_emb(q, k, freqs_cis_step)
+
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            k = torch.cat([past_k, k], dim=2)
+            v = torch.cat([past_v, v], dim=2)
+
+        new_kv_cache = (k, v)
 
         repeats = self.num_heads // self.num_kv_heads
-        k = self._repeat_kv(k, repeats)
-        v = self._repeat_kv(v, repeats)
+        k_rep = self._repeat_kv(k, repeats)
+        v_rep = self._repeat_kv(v, repeats)
 
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        if mask is None:
+        total_seq_len = k.size(2)
+        scores = torch.matmul(q, k_rep.transpose(-2, -1)) / (self.head_dim ** 0.5)
+
+        if mask is None and seq_len > 1:
             mask = torch.triu(
-                torch.ones(seq_len, seq_len, device=x.device, dtype=torch.bool),
-                diagonal=1,
+                torch.ones(seq_len, total_seq_len, device=x.device, dtype=torch.bool),
+                diagonal=total_seq_len - seq_len + 1,
             )
-        scores = scores.masked_fill(mask.view(1, 1, seq_len, seq_len), float("-inf"))
+        if mask is not None:
+            scores = scores.masked_fill(mask.view(1, 1, seq_len, total_seq_len), float("-inf"))
 
         weights = torch.softmax(scores, dim=-1)
-        output = torch.matmul(weights, v)
+        output = torch.matmul(weights, v_rep)
         output = output.transpose(1, 2).contiguous().view(batch, seq_len, self.hidden_size)
-        return self.o_proj(output)
+        return self.o_proj(output), new_kv_cache

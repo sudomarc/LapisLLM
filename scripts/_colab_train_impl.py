@@ -361,6 +361,9 @@ def git_push(token: str | None, smoke: bool) -> bool:
     if smoke:
         phase("GITHUB", "SKIPPED | smoke test")
         return True
+    if not token:
+        phase("GITHUB", "AUTHENTICATION MISSING | failing before modifying Git state")
+        raise RuntimeError("No GitHub credentials (GITHUB_TOKEN, GH_TOKEN, LAPIS_GITHUB_TOKEN, or Colab secrets) provided.")
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "PYTHONUNBUFFERED": "1"}
     temp_dir = None
     if token:

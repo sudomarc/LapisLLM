@@ -1,8 +1,6 @@
 import torch
 
-from lapis.tokenizer.tokenizer import Tokenizer
 from scripts import build_colab_corpus
-from scripts.streaming_train import StreamingTextDataset
 from scripts.train import TextDataset
 
 

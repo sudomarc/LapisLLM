@@ -94,17 +94,25 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
 
     device = next(model.parameters()).device
     ids = torch.tensor([token_ids], dtype=torch.long, device=device)
+    generated = []
 
     with torch.inference_mode():
-        for _ in range(max_new_tokens):
-            context = ids[:, -context_limit:]
-            logits, _ = model(context)
-            next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p)
-            ids = torch.cat([ids, next_id], dim=1)
-            if next_id.item() == tokenizer.eos_id:
-                break
+        logits, _, kv_cache = model(ids, use_cache=True, start_pos=0)
+        next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p)
+        start_pos = ids.size(1)
 
-    return tokenizer.decode(ids[0].tolist(), skip_special_tokens=True)
+        for _ in range(max_new_tokens):
+            token_val = int(next_id.item())
+            if token_val == tokenizer.eos_id:
+                break
+            generated.append(token_val)
+            if start_pos >= context_limit:
+                break
+            logits, _, kv_cache = model(next_id, kv_cache_list=kv_cache, start_pos=start_pos, use_cache=True)
+            start_pos += 1
+            next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p)
+
+    return tokenizer.decode(token_ids + generated, skip_special_tokens=True)
 
 
 def main() -> None:

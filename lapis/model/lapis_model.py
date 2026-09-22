@@ -95,25 +95,35 @@ class LapisModel(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input_ids, labels=None):
+    def forward(self, input_ids, labels=None, kv_cache_list=None, start_pos=0, use_cache=False):
         if input_ids.ndim != 2:
             raise ValueError("input_ids must have shape [batch, sequence]")
 
         seq_len = input_ids.size(1)
-        if seq_len > self.max_position_embeddings:
+        if start_pos + seq_len > self.max_position_embeddings:
             raise ValueError(
-                f"Sequence length {seq_len} exceeds max_position_embeddings "
+                f"Sequence length {start_pos + seq_len} exceeds max_position_embeddings "
                 f"({self.max_position_embeddings})"
             )
 
         h = self.embed_tokens(input_ids)
-        mask = torch.triu(
-            torch.ones(seq_len, seq_len, device=input_ids.device, dtype=torch.bool),
-            diagonal=1,
-        )
+        total_seq_len = start_pos + seq_len
+        mask = None
+        if seq_len > 1:
+            mask = torch.triu(
+                torch.ones(seq_len, total_seq_len, device=input_ids.device, dtype=torch.bool),
+                diagonal=total_seq_len - seq_len + 1,
+            )
 
-        for layer in self.layers:
-            h = layer(h, mask, self.freqs_cis)
+        new_kv_cache_list = [] if (use_cache or kv_cache_list is not None) else None
+
+        for i, layer in enumerate(self.layers):
+            layer_cache = kv_cache_list[i] if kv_cache_list is not None else None
+            h, new_cache = layer(
+                h, mask=mask, freqs_cis=self.freqs_cis, kv_cache=layer_cache, start_pos=start_pos
+            )
+            if new_kv_cache_list is not None:
+                new_kv_cache_list.append(new_cache)
 
         logits = self.lm_head(self.norm(h))
         loss = None
@@ -125,6 +135,9 @@ class LapisModel(nn.Module):
                 labels[:, 1:].contiguous().view(-1),
                 ignore_index=-100,
             )
+
+        if use_cache or kv_cache_list is not None:
+            return logits, loss, new_kv_cache_list
         return logits, loss
 
     def num_parameters(self, trainable_only=False):

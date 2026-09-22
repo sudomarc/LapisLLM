@@ -152,15 +152,22 @@ class LapisRuntime:
     def _iter_generated_token_ids(self, prompt: str, config: SamplingConfig) -> Iterator[int]:
         ids = self._prepare_ids(prompt)
         with torch.inference_mode():
+            logits, _, kv_cache = self.model(ids, use_cache=True, start_pos=0)
+            next_id = _sample_next_token(logits[:, -1, :], config)
+            start_pos = ids.size(1)
+
             for _ in range(config.max_new_tokens):
-                context = ids[:, -self.model.max_position_embeddings :]
-                logits, _ = self.model(context)
-                next_id = _sample_next_token(logits[:, -1, :], config)
-                ids = torch.cat([ids, next_id], dim=1)
                 token_id = int(next_id.item())
                 if token_id == self.tokenizer.eos_id:
                     break
                 yield token_id
+                if start_pos >= self.model.max_position_embeddings:
+                    break
+                logits, _, kv_cache = self.model(
+                    next_id, kv_cache_list=kv_cache, start_pos=start_pos, use_cache=True
+                )
+                start_pos += 1
+                next_id = _sample_next_token(logits[:, -1, :], config)
 
     def generate(self, prompt: str, sampling: SamplingConfig | None = None) -> str:
         config = sampling or SamplingConfig()
