@@ -28,6 +28,36 @@ model → tokenizer → data/training/evaluation → inference → generation �
 
 Do not move consumer-product responsibilities back into LapisLLM merely because they are convenient to implement here.
 
+## CHAD / Vibe ecosystem contract
+
+LapisLLM is one component of a three-repository system:
+
+~~~text
+Vibe Coding Instructions
+  -> agent governance / role contracts
+  -> CHAD
+  -> orchestration / agents / tools / memory
+  -> LapisLLM
+  -> model / training / inference
+~~~
+
+CHAD is the agent runtime and user-facing product. Vibe Coding Instructions is the portable governance/policy layer. LapisLLM remains the model-engine and inference layer.
+
+Cross-repository rules:
+
+- never move CHAD product state, agent orchestration, accounts, user memory, or consumer UX into Lapis;
+- expose model capabilities through product-agnostic public runtime/API contracts;
+- publish capability metadata rather than forcing consumers to infer support;
+- document breaking/material runtime changes for CHAD consumers;
+- validate cross-repository changes through representative public-interface integration tests;
+- treat unknown capability state as unknown rather than as supported.
+
+Canonical ecosystem references:
+
+- https://github.com/sudomarc/CHAD
+- https://github.com/sudomarc/vibe-coding-instructions
+- docs/ecosystem.md
+
 ## Non-negotiable boundaries
 
 - Do **not** add a first-class consumer/user mode to LapisLLM.
