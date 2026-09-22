@@ -20,16 +20,15 @@ class Block(nn.Module):
         self.norm2 = RMSNorm(hidden_size, eps=1e-6)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask, freqs_cis):
+    def forward(self, x, mask=None, freqs_cis=None, kv_cache=None, start_pos=0):
         residual = x
-        x = self.norm1(x)
-        x = self.attention(x, mask, freqs_cis)
-        x = self.dropout(x)
-        x = x + residual
+        x_norm = self.norm1(x)
+        attn_out, new_kv_cache = self.attention(
+            x_norm, mask=mask, freqs_cis=freqs_cis, kv_cache=kv_cache, start_pos=start_pos
+        )
+        x = residual + self.dropout(attn_out)
 
         residual = x
-        x = self.norm2(x)
-        x = self.mlp(x)
-        x = self.dropout(x)
-        x = x + residual
-        return x
+        x_norm = self.norm2(x)
+        x = residual + self.dropout(self.mlp(x_norm))
+        return x, new_kv_cache

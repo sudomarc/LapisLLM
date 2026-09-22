@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import torch
 
 from scripts import publish_checkpoint

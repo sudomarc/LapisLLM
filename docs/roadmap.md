@@ -34,7 +34,7 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 
 ## Phase 2 — Inference correctness and efficiency
 
-- [ ] Efficient KV-cache generation.
+- [x] Efficient KV-cache generation.
 - [ ] Better batching where justified.
 - [ ] Memory/throughput benchmarks.
 - [ ] Mixed-precision inference.

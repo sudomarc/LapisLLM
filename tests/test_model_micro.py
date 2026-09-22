@@ -99,3 +99,52 @@ def test_padding_targets_are_ignored_by_loss():
     labels[:, 5:] = -100
     _, loss = model(input_ids, labels=labels)
     assert torch.isfinite(loss)
+
+
+def test_kv_cache_matches_non_cached_logits():
+    torch.manual_seed(42)
+    model = make_model()
+    model.eval()
+
+    full_sequence = torch.tensor([[1, 5, 12, 18, 24, 30]])
+    with torch.no_grad():
+        full_logits, _ = model(full_sequence)
+
+    prompt = full_sequence[:, :3]
+    step_tokens = [int(tok) for tok in full_sequence[0, 3:]]
+
+    with torch.no_grad():
+        prompt_logits, _, kv_cache = model(prompt, use_cache=True, start_pos=0)
+        assert torch.allclose(full_logits[:, :3, :], prompt_logits, atol=1e-5, rtol=1e-5)
+
+        start_pos = 3
+        for token_val in step_tokens:
+            inp = torch.tensor([[token_val]])
+            step_logits, _, kv_cache = model(
+                inp, kv_cache_list=kv_cache, start_pos=start_pos, use_cache=True
+            )
+            expected_logits = full_logits[:, start_pos : start_pos + 1, :]
+            assert torch.allclose(expected_logits, step_logits, atol=1e-5, rtol=1e-5)
+            start_pos += 1
+
+
+def test_kv_cache_length_accumulation():
+    torch.manual_seed(0)
+    model = make_model()
+    model.eval()
+
+    inp1 = torch.tensor([[1, 2, 3]])
+    inp2 = torch.tensor([[4]])
+
+    with torch.no_grad():
+        _, _, kv_cache = model(inp1, use_cache=True)
+        assert len(kv_cache) == model.num_layers
+        head_dim = model.hidden_size // model.num_attention_heads
+        for k, v in kv_cache:
+            assert k.shape == (1, model.num_key_value_heads, 3, head_dim)
+            assert v.shape == (1, model.num_key_value_heads, 3, head_dim)
+
+        _, _, new_cache = model(inp2, kv_cache_list=kv_cache, start_pos=3, use_cache=True)
+        for k, v in new_cache:
+            assert k.shape == (1, model.num_key_value_heads, 4, head_dim)
+            assert v.shape == (1, model.num_key_value_heads, 4, head_dim)
