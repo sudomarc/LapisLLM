@@ -2,6 +2,7 @@
 
 - [Ecosystem contract](ecosystem.md)
 - [Roadmap](roadmap.md)
+- [Compatibility](compatibility.md)
 - [Testing](testing.md)
 - [Security](../SECURITY.md)
 
