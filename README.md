@@ -4,6 +4,8 @@
 
 **An inspectable, from-scratch decoder-only language model and ML/runtime engineering platform built with Python and PyTorch.**
 
+> **Ecosystem role:** LapisLLM is the model-engine and inference layer for CHAD, while Vibe Coding Instructions supplies reusable agent governance and role contracts.
+
 Build the tokenizer. Build the Transformer. Train it. Evaluate it. Inspect every layer of the stack.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/sudomarc/LapisLLM/tests.yml?branch=main&label=tests)](https://github.com/sudomarc/LapisLLM/actions/workflows/tests.yml)
@@ -12,7 +14,7 @@ Build the tokenizer. Build the Transformer. Train it. Evaluate it. Inspect every
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.14%2B-EE4C2C)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/license-MIT-000000)](LICENSE)
 
-[**Website**](https://sudomarc.github.io/LapisLLM/) · [**Documentation**](docs/) · [**Testing**](docs/testing.md) · [**Contributing**](CONTRIBUTING.md) · [**Security**](SECURITY.md) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](https://sudomarc.github.io/LapisLLM/roadmap/)
+[**Website**](https://sudomarc.github.io/LapisLLM/) · [**Ecosystem**](docs/ecosystem.md) · [**Roadmap**](docs/roadmap.md) · [**Documentation**](docs/) · [**Testing**](docs/testing.md) · [**Contributing**](CONTRIBUTING.md) · [**Security**](SECURITY.md) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](https://sudomarc.github.io/LapisLLM/roadmap/)
 
 </div>
 
@@ -55,6 +57,12 @@ The user-facing conversational product is **CHAD**, a separate repository. CHAD 
                             │
                           users
 ```
+
+### Relationship to CHAD
+
+CHAD is the agentic user product and runtime. It owns orchestration, agents, tools, memory, files, permissions, and provider routing. Lapis owns model and inference capabilities. The intended dependency is CHAD -> LapisLLM through a stable public runtime/API contract.
+
+See [docs/ecosystem.md](docs/ecosystem.md) for the cross-repository contract.
 
 ### What Lapis is not
 
@@ -509,6 +517,8 @@ Lapis is intentionally incomplete. The current engineering gaps include:
 These are explicit roadmap items, not hidden claims of maturity.
 
 ## Roadmap
+
+The complete model/runtime roadmap is maintained in [docs/roadmap.md](docs/roadmap.md).
 
 ### Foundation
 
