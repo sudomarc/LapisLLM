@@ -26,7 +26,7 @@ data = [
     "requests[socks]>=2.34.2",
 ]
 dev = [
-    "coverage>=7.16.0",
+    "coverage>=7.16.1",
     "datasets>=5.0.1",
     "numpy>=2.0.0,<3.0.0",
     "pip-audit>=2.10.1",
