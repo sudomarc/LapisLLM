@@ -68,6 +68,16 @@ def test_runtime_exposes_product_agnostic_helpers() -> None:
     assert info["context_length"] == 16
     assert info["parameter_count"] == 0
     assert info["tokenizer_version"] == "test-tokenizer"
+    assert info["capabilities"]["streaming"] is True
+
+def test_runtime_get_capabilities() -> None:
+    runtime = make_runtime()
+    caps = runtime.get_capabilities()
+    assert caps["context_length"] == 16
+    assert caps["tokenizer_version"] == "test-tokenizer"
+    assert caps["vocab_size"] == 8
+    assert caps["streaming"] is True
+    assert "temperature" in caps["sampling_parameters"]
 
 
 def test_prepare_ids_truncates_long_prompts_to_context_limit() -> None:

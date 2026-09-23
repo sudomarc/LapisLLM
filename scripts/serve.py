@@ -4,18 +4,18 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+import json
 
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from lapis.config.base import resolve_device
-from lapis.config.model_config import model_config_kwargs
-from lapis.model.lapis_model import LapisModel
-from lapis.tokenizer.tokenizer import Tokenizer
-from scripts.generate import validate_checkpoint_tokenizer
+from lapis.inference.runtime import CheckpointLoadError, LapisRuntime, SamplingConfig
+
+
 
 
 class Message(BaseModel):
@@ -30,53 +30,88 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(default=64, ge=1, le=4096)
     top_k: int = Field(default=40, ge=0, le=4096)
     top_p: float = Field(default=0.95, gt=0.0, le=1.0)
+    stream: bool = False
 
 
-def load_runtime(checkpoint_path: str, device: torch.device):
-    path = Path(checkpoint_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {path}")
-
-    checkpoint = torch.load(path, map_location=device, weights_only=True)
-    tokenizer_path = path.parent / "tokenizer"
-    if not tokenizer_path.exists():
-        raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
-
-    tokenizer = Tokenizer.load(str(tokenizer_path))
-    validate_checkpoint_tokenizer(checkpoint, tokenizer)
-    model = LapisModel(**model_config_kwargs(checkpoint["config"])).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-    return model, tokenizer
-
-
-def create_app(checkpoint_path: str, device: torch.device) -> FastAPI:
-    try:
-        model, tokenizer = load_runtime(checkpoint_path, device)
-    except (FileNotFoundError, KeyError, RuntimeError, ValueError) as exc:
-        raise RuntimeError(f"Unable to load serving runtime: {exc}") from exc
+def create_app(
+    checkpoint_path: str | None = None,
+    device: torch.device | str = "auto",
+    runtime: LapisRuntime | None = None,
+) -> FastAPI:
+    if runtime is None:
+        if checkpoint_path is None:
+            raise ValueError("Either checkpoint_path or runtime must be provided")
+        try:
+            runtime = LapisRuntime.from_checkpoint(checkpoint_path, str(device))
+        except (CheckpointLoadError, FileNotFoundError, RuntimeError, ValueError) as exc:
+            raise RuntimeError(f"Unable to load serving runtime: {exc}") from exc
 
     app = FastAPI(title="LAPIS API", version="0.2.0")
 
     @app.get("/v1/models")
     def models():
-        return {"object": "list", "data": [{"id": "lapis-tiny", "object": "model"}]}
+        info = runtime.get_model_info()
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": "lapis-tiny",
+                    "object": "model",
+                    "context_length": info["context_length"],
+                    "capabilities": info["capabilities"],
+                }
+            ],
+        }
 
     @app.post("/v1/chat/completions")
     def chat(request: ChatRequest):
         prompt = "\n".join(f"{m.role}: {m.content}" for m in request.messages)
-        from scripts.generate import generate
+        sampling = SamplingConfig(
+            max_new_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_k=request.top_k,
+            top_p=request.top_p,
+        )
+
+        if request.stream:
+            def event_generator():
+                try:
+                    for chunk in runtime.stream_generate(prompt, sampling):
+                        data = {
+                            "id": "lapis-completion",
+                            "object": "chat.completion.chunk",
+                            "model": request.model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"role": "assistant", "content": chunk},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                    done_data = {
+                        "id": "lapis-completion",
+                        "object": "chat.completion.chunk",
+                        "model": request.model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(done_data)}\n\n"
+                    yield "data: [DONE]\n\n"
+                except (ValueError, RuntimeError) as exc:
+                    err_data = {"error": {"message": str(exc), "type": "runtime_error"}}
+                    yield f"data: {json.dumps(err_data)}\n\n"
+
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
 
         try:
-            text = generate(
-                model,
-                tokenizer,
-                prompt,
-                request.max_tokens,
-                request.temperature,
-                request.top_k,
-                request.top_p,
-            )
+            text = runtime.generate(prompt, sampling)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
