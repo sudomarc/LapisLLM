@@ -21,16 +21,16 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 
 ## Phase 1 — Runtime contract for CHAD
 
-- [ ] Versioned public runtime contract.
-- [ ] Stable model metadata schema.
-- [ ] Explicit context-length metadata.
-- [ ] Capability metadata.
+- [x] Versioned public runtime contract.
+- [x] Stable model metadata schema.
+- [x] Explicit context-length metadata.
+- [x] Capability metadata.
 - [ ] Consistent usage metadata.
 - [ ] Structured error taxonomy.
-- [ ] Streaming endpoint/runtime integration.
+- [x] Streaming endpoint/runtime integration.
 - [ ] Cancellation support.
 - [ ] Contract tests consumed by CHAD.
-- [ ] Compatibility documentation.
+- [x] Compatibility documentation.
 
 ## Phase 2 — Inference correctness and efficiency
 

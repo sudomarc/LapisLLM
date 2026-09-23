@@ -138,6 +138,17 @@ class LapisRuntime:
             "context_length": self.model.max_position_embeddings,
             "parameter_count": sum(parameter.numel() for parameter in self.model.parameters()),
             "tokenizer_version": self.tokenizer.VERSION,
+            "capabilities": self.get_capabilities(),
+        }
+
+    def get_capabilities(self) -> dict[str, Any]:
+        """Return capabilities metadata exposed to consumer applications like CHAD."""
+        return {
+            "context_length": self.model.max_position_embeddings,
+            "tokenizer_version": self.tokenizer.VERSION,
+            "vocab_size": self.tokenizer.vocab_size,
+            "streaming": True,
+            "sampling_parameters": ["max_new_tokens", "temperature", "top_k", "top_p"],
         }
 
     def _prepare_ids(self, prompt: str) -> torch.Tensor:

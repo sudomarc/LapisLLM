@@ -12,19 +12,18 @@ This matrix records observed public integration state. It is not a promise that 
 
 The current Lapis HTTP serving script exposes:
 
-- GET /v1/models
-- POST /v1/chat/completions
+- GET /v1/models (includes `context_length` and `capabilities` metadata)
+- POST /v1/chat/completions (supports `stream: bool` parameter for SSE streaming chunks)
 
-The current serving request supports model, messages, temperature, max_tokens, top_k and top_p.
-
-The current HTTP serving path returns a completed chat response and does not expose an incremental HTTP streaming contract in that script.
+The current serving request supports `model`, `messages`, `temperature`, `max_tokens`, `top_k`, `top_p`, and `stream`.
 
 Therefore:
 
 - model discovery: PRESENT;
 - non-streaming generation: PRESENT;
-- context_length metadata: NOT ADVERTISED by the current /v1/models response;
-- HTTP streaming: NOT VERIFIED / NOT EXPOSED by the current serving script;
+- context_length metadata: ADVERTISED in `/v1/models`;
+- capabilities metadata: ADVERTISED in `/v1/models`;
+- HTTP streaming: PRESENT (`stream: true` SSE `text/event-stream`);
 - HTTP cancellation: NOT VERIFIED.
 
 CHAD must not infer unsupported capabilities from the underlying Python runtime.
