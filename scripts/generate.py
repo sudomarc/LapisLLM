@@ -32,7 +32,13 @@ def validate_checkpoint_tokenizer(checkpoint: dict, tokenizer: Tokenizer) -> Non
         )
 
 
-def validate_sampling_args(max_new_tokens: int, temperature: float, top_k: int, top_p: float) -> None:
+def validate_sampling_args(
+    max_new_tokens: int,
+    temperature: float,
+    top_k: int,
+    top_p: float,
+    seed: int | None = None,
+) -> None:
     """Validate generation controls before sampling."""
     if not isinstance(max_new_tokens, int) or isinstance(max_new_tokens, bool):
         raise ValueError("max_new_tokens must be an integer")
@@ -46,9 +52,11 @@ def validate_sampling_args(max_new_tokens: int, temperature: float, top_k: int, 
         raise ValueError("top_k must be >= 0")
     if not isinstance(top_p, (int, float)) or isinstance(top_p, bool) or not math.isfinite(top_p) or not 0 < top_p <= 1:
         raise ValueError("top_p must be finite and in the range (0, 1]")
+    if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool) or seed < 0):
+        raise ValueError("seed must be a non-negative integer or None")
 
 
-def sample_next_token(logits, temperature, top_k, top_p):
+def sample_next_token(logits, temperature, top_k, top_p, generator=None):
     """Apply validated temperature, top-k, and top-p sampling to model logits."""
     validate_sampling_args(1, temperature, top_k, top_p)
     if not torch.isfinite(logits).all():
@@ -78,12 +86,12 @@ def sample_next_token(logits, temperature, top_k, top_p):
     probabilities = torch.softmax(logits, dim=-1)
     if not torch.isfinite(probabilities).all():
         raise RuntimeError("Sampling produced non-finite probabilities")
-    return torch.multinomial(probabilities, num_samples=1)
+    return torch.multinomial(probabilities, num_samples=1, generator=generator)
 
 
-def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p):
+def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p, seed=None):
     """Generate a decoded continuation from an already-loaded model and tokenizer."""
-    validate_sampling_args(max_new_tokens, temperature, top_k, top_p)
+    validate_sampling_args(max_new_tokens, temperature, top_k, top_p, seed=seed)
     token_ids = tokenizer.encode(prompt, add_special_tokens=False)
     if not token_ids:
         token_ids = [tokenizer.bos_id]
@@ -96,9 +104,14 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
     ids = torch.tensor([token_ids], dtype=torch.long, device=device)
     generated = []
 
+    generator = None
+    if seed is not None:
+        generator = torch.Generator(device=device.type if hasattr(device, "type") else str(device))
+        generator.manual_seed(seed)
+
     with torch.inference_mode():
         logits, _, kv_cache = model(ids, use_cache=True, start_pos=0)
-        next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p)
+        next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p, generator=generator)
         start_pos = ids.size(1)
 
         for _ in range(max_new_tokens):
@@ -110,7 +123,7 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
                 break
             logits, _, kv_cache = model(next_id, kv_cache_list=kv_cache, start_pos=start_pos, use_cache=True)
             start_pos += 1
-            next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p)
+            next_id = sample_next_token(logits[:, -1, :], temperature, top_k, top_p, generator=generator)
 
     return tokenizer.decode(token_ids + generated, skip_special_tokens=True)
 
@@ -129,6 +142,7 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-k", type=int, default=40)
     parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -138,6 +152,7 @@ def main() -> None:
             args.temperature,
             args.top_k,
             args.top_p,
+            seed=args.seed,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -172,6 +187,7 @@ def main() -> None:
             args.temperature,
             args.top_k,
             args.top_p,
+            seed=args.seed,
         )
     )
 

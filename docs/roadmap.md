@@ -25,7 +25,7 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 - [x] Stable model metadata schema.
 - [x] Explicit context-length metadata.
 - [x] Capability metadata.
-- [ ] Consistent usage metadata.
+- [x] Consistent usage metadata.
 - [ ] Structured error taxonomy.
 - [x] Streaming endpoint/runtime integration.
 - [ ] Cancellation support.
@@ -36,12 +36,12 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 
 - [x] Efficient KV-cache generation.
 - [ ] Better batching where justified.
-- [ ] Memory/throughput benchmarks.
+- [x] Memory/throughput benchmarks.
 - [ ] Mixed-precision inference.
-- [ ] Quantized inference.
+- [x] Quantized inference.
 - [ ] Long-context validation.
-- [ ] Deterministic generation controls.
-- [ ] p50/p95 latency tracking.
+- [x] Deterministic generation controls.
+- [x] p50/p95 latency tracking.
 - [ ] Regression benchmarks.
 
 ## Phase 3 — Training reproducibility

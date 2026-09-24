@@ -218,9 +218,9 @@ Common commands:
 ```bash
 lapis dev train
 lapis dev evaluate --checkpoint checkpoints/latest.pt
-lapis dev generate "A language model learns by"
+lapis dev generate "A language model learns by" --seed 42
 lapis dev inspect --checkpoint checkpoints/latest.pt
-lapis dev benchmark --checkpoint checkpoints/latest.pt
+lapis dev benchmark --checkpoint checkpoints/latest.pt --runs 5 --warmup 1 --quantize
 lapis dev checkpoint inspect --checkpoint checkpoints/latest.pt
 ```
 
@@ -233,8 +233,10 @@ Applications such as CHAD should use the stable public runtime instead of import
 ```python
 from lapis.inference import LapisRuntime, SamplingConfig
 
-runtime = LapisRuntime.from_checkpoint("checkpoints/latest.pt")
+# Load with optional dynamic INT8 CPU quantization
+runtime = LapisRuntime.from_checkpoint("checkpoints/latest.pt", quantize=False)
 
+# Generate text with deterministic seed sampling
 response = runtime.generate(
     "Explain DNS.",
     sampling=SamplingConfig(
@@ -242,18 +244,29 @@ response = runtime.generate(
         temperature=0.8,
         top_k=40,
         top_p=0.95,
+        seed=42,
     ),
 )
+
+# Or generate with structured usage & performance metadata
+metadata = runtime.generate_with_metadata(
+    "Explain DNS.",
+    sampling=SamplingConfig(max_new_tokens=128, seed=42),
+)
+# Returns dict: text, prompt_tokens, completion_tokens, total_tokens,
+# time_to_first_token_ms, total_time_ms, tokens_per_second
 ```
 
 The runtime surface currently exposes:
 
-- checkpoint-backed model loading;
+- checkpoint-backed model loading with optional dynamic INT8 quantization;
+- deterministic sampling control via random seed configuration;
+- structured generation usage metadata (token counts, TTFT, latency, throughput);
 - tokenizer/model compatibility checks;
 - tokenization;
 - text generation;
 - streaming generation;
-- model metadata such as context length, vocabulary size, parameter count, device, and tokenizer version.
+- model metadata such as context length, vocabulary size, parameter count, device, quantization state, and tokenizer version.
 
 Inference loading uses PyTorch's restricted `weights_only=True` mode. Runtime generation validates sampling parameters and rejects non-finite logits or probabilities rather than silently continuing with corrupted numerical state.
 
@@ -544,7 +557,10 @@ The complete model/runtime roadmap is maintained in [docs/roadmap.md](docs/roadm
 
 ### Inference and scale
 
-- [ ] Efficient KV-cache generation
+- [x] Efficient KV-cache generation
+- [x] Quantized inference & dynamic INT8 support
+- [x] Deterministic generation controls & seed support
+- [x] p50/p95 latency tracking & throughput benchmarks
 - [ ] Mixed-precision optimization
 - [ ] Distributed / multi-GPU training
 - [ ] Larger model configurations

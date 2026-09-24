@@ -52,3 +52,34 @@ def test_system_command() -> None:
     assert "Lapis System" in result.stdout
     assert "CPU" in result.stdout
     assert "RAM" in result.stdout
+
+
+def test_dev_benchmark_command(monkeypatch) -> None:
+    class MockRuntime:
+        device = "cpu"
+        quantized = False
+
+        def generate(self, prompt, sampling):
+            return "output"
+
+        def generate_with_metadata(self, prompt, sampling):
+            return {
+                "text": "benchmark text",
+                "prompt_tokens": 5,
+                "completion_tokens": 10,
+                "total_tokens": 15,
+                "time_to_first_token_ms": 12.5,
+                "total_time_ms": 50.0,
+                "tokens_per_second": 200.0,
+            }
+
+    monkeypatch.setattr(
+        "lapis.dev.cli.LapisRuntime.from_checkpoint",
+        lambda checkpoint, device, quantize=False: MockRuntime(),
+    )
+    result = runner.invoke(app, ["dev", "benchmark", "--runs", "2", "--warmup", "1"])
+    assert result.exit_code == 0
+    assert "Inference Benchmark" in result.stdout
+    assert "Avg Throughput" in result.stdout
+    assert "p50 Latency" in result.stdout
+    assert "p95 Latency" in result.stdout
