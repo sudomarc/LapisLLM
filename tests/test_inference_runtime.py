@@ -57,6 +57,77 @@ def test_sampling_config_rejects_invalid_types() -> None:
         SamplingConfig(max_new_tokens=True).validate()
     with pytest.raises(ValueError, match="top_k"):
         SamplingConfig(top_k=1.5).validate()
+    with pytest.raises(ValueError, match="seed"):
+        SamplingConfig(seed=-1).validate()
+    with pytest.raises(ValueError, match="seed"):
+        SamplingConfig(seed="123").validate()  # type: ignore[arg-type]
+
+
+def test_sampling_seed_is_deterministic() -> None:
+    logits = torch.randn(1, 10)
+    config = SamplingConfig(seed=42)
+    g1 = torch.Generator().manual_seed(42)
+    g2 = torch.Generator().manual_seed(42)
+    t1 = _sample_next_token(logits, config, generator=g1)
+    t2 = _sample_next_token(logits, config, generator=g2)
+    assert torch.equal(t1, t2)
+
+
+def test_generate_with_metadata_returns_structured_metrics(monkeypatch) -> None:
+    runtime = make_runtime()
+    monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 3, 3]))
+    meta = runtime.generate_with_metadata("hello", SamplingConfig(max_new_tokens=3))
+    assert meta["text"] == "xxxx"
+    assert meta["prompt_tokens"] == 1
+    assert meta["completion_tokens"] == 3
+    assert meta["total_tokens"] == 4
+    assert "time_to_first_token_ms" in meta
+    assert "total_time_ms" in meta
+    assert "tokens_per_second" in meta
+
+
+def test_from_checkpoint_supports_quantize(tmp_path: Path) -> None:
+    from lapis.tokenizer.tokenizer import Tokenizer
+
+    tokenizer_dir = tmp_path / "tokenizer"
+    tokenizer_dir.mkdir()
+    tokenizer = Tokenizer.train_from_iterator(["hello world Lapis LLM"], vocab_size=32)
+    tokenizer.save(str(tokenizer_dir))
+
+    checkpoint_path = tmp_path / "model.pt"
+    config = {
+        "model": {
+            "vocab_size": tokenizer.vocab_size,
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+            "rope_theta": 10000.0,
+            "dropout": 0.0,
+            "bias": True,
+        }
+    }
+    from lapis.config.model_config import model_config_kwargs
+    from lapis.model.lapis_model import LapisModel
+
+    model = LapisModel(**model_config_kwargs(config))
+    torch.save(
+        {
+            "config": config,
+            "model_state_dict": model.state_dict(),
+            "tokenizer_version": tokenizer.VERSION,
+        },
+        checkpoint_path,
+    )
+
+    runtime = LapisRuntime.from_checkpoint(checkpoint_path, device="cpu", quantize=True)
+    assert runtime.quantized is True
+    info = runtime.get_model_info()
+    assert info["quantized"] is True
+    assert info["capabilities"]["quantized"] is True
+    assert "seed" in info["capabilities"]["sampling_parameters"]
 
 
 def test_runtime_exposes_product_agnostic_helpers() -> None:

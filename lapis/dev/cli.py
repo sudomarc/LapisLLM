@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import torch
@@ -67,9 +66,28 @@ def generate(
     temperature: float = typer.Option(0.8, "--temperature", min=0.01),
     top_k: int = typer.Option(40, "--top-k", min=0),
     top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
+    seed: int | None = typer.Option(None, "--seed"),
     device: str = typer.Option("auto", "--device"),
 ) -> None:
-    _run("scripts.generate", "--checkpoint", str(checkpoint), "--prompt", prompt, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p), "--device", device)
+    args = [
+        "--checkpoint",
+        str(checkpoint),
+        "--prompt",
+        prompt,
+        "--max-new-tokens",
+        str(max_new_tokens),
+        "--temperature",
+        str(temperature),
+        "--top-k",
+        str(top_k),
+        "--top-p",
+        str(top_p),
+        "--device",
+        device,
+    ]
+    if seed is not None:
+        args += ["--seed", str(seed)]
+    _run("scripts.generate", *args)
 
 
 @app.command("chat")
@@ -114,15 +132,69 @@ def benchmark(
     prompt: str = typer.Option("The future of computing is", "--prompt"),
     tokens: int = typer.Option(32, "--tokens", min=1),
     device: str = typer.Option("auto", "--device"),
+    warmup: int = typer.Option(1, "--warmup", min=0),
+    runs: int = typer.Option(5, "--runs", min=1),
+    seed: int | None = typer.Option(None, "--seed"),
+    quantize: bool = typer.Option(False, "--quantize"),
 ) -> None:
-    """Measure inference throughput without changing the checkpoint."""
-    runtime = LapisRuntime.from_checkpoint(checkpoint, device)
-    started = time.perf_counter()
-    text = runtime.generate(prompt, SamplingConfig(max_new_tokens=tokens))
-    elapsed = time.perf_counter() - started
-    rate = tokens / elapsed if elapsed > 0 else 0.0
-    console.print(f"device={runtime.device} tokens={tokens} elapsed={elapsed:.3f}s tok/s={rate:.1f}")
-    console.print(text)
+    """Measure inference latency and throughput without changing the checkpoint."""
+    runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize)
+    sampling = SamplingConfig(max_new_tokens=tokens, seed=seed)
+
+    for _ in range(warmup):
+        runtime.generate(prompt, sampling)
+
+    latencies_ms: list[float] = []
+    ttfts_ms: list[float] = []
+    rates: list[float] = []
+    sample_text = ""
+
+    for _ in range(runs):
+        meta = runtime.generate_with_metadata(prompt, sampling)
+        sample_text = meta["text"]
+        latencies_ms.append(meta["total_time_ms"])
+        ttfts_ms.append(meta["time_to_first_token_ms"])
+        rates.append(meta["tokens_per_second"])
+
+    latencies_ms.sort()
+    ttfts_ms.sort()
+    rates.sort()
+
+    p50_latency = latencies_ms[len(latencies_ms) // 2]
+    p95_index = min(int(len(latencies_ms) * 0.95), len(latencies_ms) - 1)
+    p95_latency = latencies_ms[p95_index]
+    avg_rate = sum(rates) / len(rates)
+    avg_ttft = sum(ttfts_ms) / len(ttfts_ms)
+
+    memory_info = ""
+    if torch.cuda.is_available() and "cuda" in str(runtime.device):
+        max_mem_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+        memory_info = f"peak_gpu_mem={max_mem_mb:.1f}MB"
+    else:
+        try:
+            import psutil
+
+            process = psutil.Process()
+            rss_mb = process.memory_info().rss / (1024 * 1024)
+            memory_info = f"rss_mem={rss_mb:.1f}MB"
+        except ImportError:
+            pass
+
+    table = Table(title=f"Inference Benchmark ({runs} runs, warmup={warmup})")
+    table.add_column("Metric")
+    table.add_column("Value")
+    table.add_row("Device", str(runtime.device))
+    table.add_row("Quantized", str(runtime.quantized))
+    table.add_row("Generated Tokens / run", str(tokens))
+    table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")
+    table.add_row("Avg TTFT (ms)", f"{avg_ttft:.2f}")
+    table.add_row("p50 Latency (ms)", f"{p50_latency:.2f}")
+    table.add_row("p95 Latency (ms)", f"{p95_latency:.2f}")
+    if memory_info:
+        table.add_row("Memory Footprint", memory_info)
+
+    console.print(table)
+    console.print(f"[dim]Sample Output:[/dim] {sample_text}")
 
 
 @app.command("publish")
