@@ -26,10 +26,10 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 - [x] Explicit context-length metadata.
 - [x] Capability metadata.
 - [x] Consistent usage metadata.
-- [ ] Structured error taxonomy.
+- [x] Structured error taxonomy.
 - [x] Streaming endpoint/runtime integration.
-- [ ] Cancellation support.
-- [ ] Contract tests consumed by CHAD.
+- [x] Cancellation support.
+- [x] Contract tests consumed by CHAD.
 - [x] Compatibility documentation.
 
 ## Phase 2 — Inference correctness and efficiency

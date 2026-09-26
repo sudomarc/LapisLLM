@@ -5,17 +5,24 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from lapis.config.base import resolve_device
-from lapis.inference.runtime import CheckpointLoadError, LapisRuntime, SamplingConfig
-
-
+from lapis.inference.errors import (
+    CancellationError,
+    CheckpointLoadError,
+    ContextLengthExceededError,
+    InvalidPromptError,
+    InvalidSamplingConfigError,
+    LapisInferenceError,
+)
+from lapis.inference.runtime import LapisRuntime, SamplingConfig
 
 
 class Message(BaseModel):
@@ -26,11 +33,32 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     model: str = "lapis-tiny"
     messages: list[Message] = Field(min_length=1)
-    temperature: float = Field(default=0.8, gt=0.0, le=5.0)
+    temperature: float = Field(default=0.8, ge=0.0, le=5.0)
     max_tokens: int = Field(default=64, ge=1, le=4096)
     top_k: int = Field(default=40, ge=0, le=4096)
-    top_p: float = Field(default=0.95, gt=0.0, le=1.0)
+    top_p: float = Field(default=0.95, ge=0.0, le=1.0)
     stream: bool = False
+
+
+def _status_code_for_error(exc: Exception) -> int:
+    if isinstance(exc, (InvalidSamplingConfigError, InvalidPromptError, ContextLengthExceededError)):
+        return 400
+    if isinstance(exc, CancellationError):
+        return 408
+    if isinstance(exc, LapisInferenceError):
+        return 500
+    return 500
+
+
+def _error_payload(exc: Exception) -> dict[str, Any]:
+    code = getattr(exc, "code", "runtime_error")
+    return {
+        "error": {
+            "code": code,
+            "message": str(exc),
+            "type": type(exc).__name__,
+        }
+    }
 
 
 def create_app(
@@ -64,19 +92,34 @@ def create_app(
         }
 
     @app.post("/v1/chat/completions")
-    def chat(request: ChatRequest):
+    def chat(request: ChatRequest, http_request: Request):
         prompt = "\n".join(f"{m.role}: {m.content}" for m in request.messages)
-        sampling = SamplingConfig(
-            max_new_tokens=request.max_tokens,
-            temperature=request.temperature,
-            top_k=request.top_k,
-            top_p=request.top_p,
-        )
+        try:
+            sampling = SamplingConfig(
+                max_new_tokens=request.max_tokens,
+                temperature=request.temperature,
+                top_k=request.top_k,
+                top_p=request.top_p,
+            )
+            sampling.validate()
+        except InvalidSamplingConfigError as exc:
+            return JSONResponse(
+                status_code=_status_code_for_error(exc),
+                content=_error_payload(exc),
+            )
+
+        def is_cancelled() -> bool:
+            return getattr(http_request, "_is_disconnected", False)
 
         if request.stream:
             def event_generator():
                 try:
-                    for chunk in runtime.stream_generate(prompt, sampling):
+                    try:
+                        stream_iter = runtime.stream_generate(prompt, sampling, is_cancelled=is_cancelled)
+                    except TypeError:
+                        stream_iter = runtime.stream_generate(prompt, sampling)
+
+                    for chunk in stream_iter:
                         data = {
                             "id": "lapis-completion",
                             "object": "chat.completion.chunk",
@@ -104,16 +147,27 @@ def create_app(
                     }
                     yield f"data: {json.dumps(done_data)}\n\n"
                     yield "data: [DONE]\n\n"
-                except (ValueError, RuntimeError) as exc:
-                    err_data = {"error": {"message": str(exc), "type": "runtime_error"}}
-                    yield f"data: {json.dumps(err_data)}\n\n"
+                except (LapisInferenceError, ValueError, RuntimeError) as exc:
+                    yield f"data: {json.dumps(_error_payload(exc))}\n\n"
 
             return StreamingResponse(event_generator(), media_type="text/event-stream")
 
         try:
-            text = runtime.generate(prompt, sampling)
+            try:
+                text = runtime.generate(prompt, sampling, is_cancelled=is_cancelled)
+            except TypeError:
+                text = runtime.generate(prompt, sampling)
+        except LapisInferenceError as exc:
+            return JSONResponse(
+                status_code=_status_code_for_error(exc),
+                content=_error_payload(exc),
+            )
         except (ValueError, RuntimeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "runtime_error", "message": str(exc), "type": type(exc).__name__}},
+            )
+
         return {
             "id": "lapis-completion",
             "object": "chat.completion",

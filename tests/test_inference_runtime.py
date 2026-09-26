@@ -3,7 +3,19 @@ from pathlib import Path
 import pytest
 import torch
 
-from lapis.inference.runtime import LapisRuntime, SamplingConfig, _sample_next_token
+from lapis.inference import (
+    CancellationError,
+    CheckpointLoadError,
+    ContextLengthExceededError,
+    GenerationError,
+    InvalidPromptError,
+    InvalidSamplingConfigError,
+    LapisInferenceError,
+    LapisRuntime,
+    NonFiniteLogitsError,
+    SamplingConfig,
+)
+from lapis.inference.runtime import _sample_next_token
 
 
 class FakeTokenizer:
@@ -43,23 +55,40 @@ def make_runtime(tokenizer=None) -> LapisRuntime:
     return runtime
 
 
+def test_error_taxonomy_inheritance_and_codes() -> None:
+    assert issubclass(CheckpointLoadError, (LapisInferenceError, RuntimeError))
+    assert issubclass(InvalidSamplingConfigError, (LapisInferenceError, ValueError))
+    assert issubclass(InvalidPromptError, (LapisInferenceError, ValueError))
+    assert issubclass(ContextLengthExceededError, (LapisInferenceError, ValueError))
+    assert issubclass(GenerationError, LapisInferenceError)
+    assert issubclass(NonFiniteLogitsError, GenerationError)
+    assert issubclass(CancellationError, LapisInferenceError)
+
+    err = InvalidSamplingConfigError("bad temperature")
+    assert err.code == "invalid_sampling_config"
+    assert issubclass(InvalidSamplingConfigError, ValueError)
+
+    cancel_err = CancellationError("cancelled operation")
+    assert cancel_err.code == "cancelled"
+
+
 def test_sampling_config_rejects_non_finite_values() -> None:
     for temperature in (float("nan"), float("inf"), float("-inf")):
-        with pytest.raises(ValueError, match="temperature"):
+        with pytest.raises(InvalidSamplingConfigError, match="temperature"):
             SamplingConfig(temperature=temperature).validate()
     for top_p in (float("nan"), float("inf"), float("-inf")):
-        with pytest.raises(ValueError, match="top_p"):
+        with pytest.raises(InvalidSamplingConfigError, match="top_p"):
             SamplingConfig(top_p=top_p).validate()
 
 
 def test_sampling_config_rejects_invalid_types() -> None:
-    with pytest.raises(ValueError, match="max_new_tokens"):
+    with pytest.raises(InvalidSamplingConfigError, match="max_new_tokens"):
         SamplingConfig(max_new_tokens=True).validate()
-    with pytest.raises(ValueError, match="top_k"):
+    with pytest.raises(InvalidSamplingConfigError, match="top_k"):
         SamplingConfig(top_k=1.5).validate()
-    with pytest.raises(ValueError, match="seed"):
+    with pytest.raises(InvalidSamplingConfigError, match="seed"):
         SamplingConfig(seed=-1).validate()
-    with pytest.raises(ValueError, match="seed"):
+    with pytest.raises(InvalidSamplingConfigError, match="seed"):
         SamplingConfig(seed="123").validate()  # type: ignore[arg-type]
 
 
@@ -84,6 +113,22 @@ def test_generate_with_metadata_returns_structured_metrics(monkeypatch) -> None:
     assert "time_to_first_token_ms" in meta
     assert "total_time_ms" in meta
     assert "tokens_per_second" in meta
+
+
+def test_tokenize_validates_input() -> None:
+    runtime = make_runtime()
+    with pytest.raises(InvalidPromptError, match="text must be a string"):
+        runtime.tokenize(123)  # type: ignore[arg-type]
+
+
+def test_runtime_cancellation_callback() -> None:
+    runtime = make_runtime()
+
+    def is_cancelled() -> bool:
+        return True
+
+    with pytest.raises(CancellationError, match="cancelled"):
+        runtime.generate("hello", is_cancelled=is_cancelled)
 
 
 def test_from_checkpoint_supports_quantize(tmp_path: Path) -> None:
@@ -127,6 +172,7 @@ def test_from_checkpoint_supports_quantize(tmp_path: Path) -> None:
     info = runtime.get_model_info()
     assert info["quantized"] is True
     assert info["capabilities"]["quantized"] is True
+    assert info["capabilities"]["cancellation"] is True
     assert "seed" in info["capabilities"]["sampling_parameters"]
 
 
@@ -140,6 +186,8 @@ def test_runtime_exposes_product_agnostic_helpers() -> None:
     assert info["parameter_count"] == 0
     assert info["tokenizer_version"] == "test-tokenizer"
     assert info["capabilities"]["streaming"] is True
+    assert info["capabilities"]["cancellation"] is True
+
 
 def test_runtime_get_capabilities() -> None:
     runtime = make_runtime()
@@ -148,6 +196,7 @@ def test_runtime_get_capabilities() -> None:
     assert caps["tokenizer_version"] == "test-tokenizer"
     assert caps["vocab_size"] == 8
     assert caps["streaming"] is True
+    assert caps["cancellation"] is True
     assert "temperature" in caps["sampling_parameters"]
 
 
@@ -160,7 +209,7 @@ def test_prepare_ids_truncates_long_prompts_to_context_limit() -> None:
 
 def test_sampling_rejects_non_finite_logits() -> None:
     logits = torch.tensor([[0.0, float("nan"), 1.0]])
-    with pytest.raises(RuntimeError, match="non-finite logits"):
+    with pytest.raises(NonFiniteLogitsError, match="non-finite logits"):
         _sample_next_token(logits, SamplingConfig())
 
 
@@ -172,7 +221,7 @@ def test_stream_generate_yields_incremental_text(monkeypatch) -> None:
 
 def test_stream_generate_buffers_unstable_decoding(monkeypatch) -> None:
     runtime = make_runtime()
-    decoded = {(3,): "�", (3, 4): "é"}
+    decoded = {(3,): "", (3, 4): "é"}
     monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 4]))
     runtime.tokenizer.decode = lambda ids, skip_special_tokens=True: decoded[tuple(ids)]
     assert "".join(runtime.stream_generate("hello", SamplingConfig(max_new_tokens=2))) == "é"

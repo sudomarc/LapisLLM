@@ -5,7 +5,7 @@ This matrix records observed public integration state. It is not a promise that 
 | Component | Current state | Public capability | Consumer |
 |---|---|---|---|
 | Vibe Coding Instructions | main | policy, skills, role contracts | CHAD agents / coding agents |
-| LapisLLM 0.2.0 | current verified repo release | model discovery + non-streaming chat HTTP; public runtime generation/streaming primitives | CHAD Model Gateway |
+| LapisLLM 0.2.0 | current verified repo release | model discovery, non-streaming & streaming chat HTTP, structured error taxonomy, generation cancellation | CHAD Model Gateway |
 | CHAD | current development | conversation application + Lapis HTTP client; agent runtime planned | end users |
 
 ## Lapis -> CHAD compatibility currently observed
@@ -22,9 +22,10 @@ Therefore:
 - model discovery: PRESENT;
 - non-streaming generation: PRESENT;
 - context_length metadata: ADVERTISED in `/v1/models`;
-- capabilities metadata: ADVERTISED in `/v1/models`;
+- capabilities metadata: ADVERTISED in `/v1/models` (including `streaming` and `cancellation`);
 - HTTP streaming: PRESENT (`stream: true` SSE `text/event-stream`);
-- HTTP cancellation: NOT VERIFIED.
+- structured error taxonomy: PRESENT (`lapis.inference.errors` mapped to JSON `error` payload and HTTP status codes);
+- HTTP cancellation: PRESENT (checks client disconnects and cancellation callbacks during token generation).
 
 CHAD must not infer unsupported capabilities from the underlying Python runtime.
 

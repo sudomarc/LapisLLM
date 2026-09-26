@@ -6,18 +6,21 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import torch
 
 from lapis.config.base import resolve_device
 from lapis.config.model_config import model_config_kwargs
+from lapis.inference.errors import (
+    CancellationError,
+    CheckpointLoadError,
+    InvalidPromptError,
+    InvalidSamplingConfigError,
+    NonFiniteLogitsError,
+)
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
-
-
-class CheckpointLoadError(RuntimeError):
-    """Raised when an inference checkpoint cannot be loaded safely."""
 
 
 @dataclass(frozen=True)
@@ -30,31 +33,31 @@ class SamplingConfig:
 
     def validate(self) -> None:
         if not isinstance(self.max_new_tokens, int) or isinstance(self.max_new_tokens, bool):
-            raise ValueError("max_new_tokens must be an integer")
+            raise InvalidSamplingConfigError("max_new_tokens must be an integer")
         if self.max_new_tokens < 1:
-            raise ValueError("max_new_tokens must be at least 1")
+            raise InvalidSamplingConfigError("max_new_tokens must be at least 1")
         if (
             not isinstance(self.temperature, (int, float))
             or isinstance(self.temperature, bool)
             or not math.isfinite(self.temperature)
             or self.temperature <= 0
         ):
-            raise ValueError("temperature must be finite and greater than 0")
+            raise InvalidSamplingConfigError("temperature must be finite and greater than 0")
         if not isinstance(self.top_k, int) or isinstance(self.top_k, bool):
-            raise ValueError("top_k must be an integer")
+            raise InvalidSamplingConfigError("top_k must be an integer")
         if self.top_k < 0:
-            raise ValueError("top_k must be >= 0")
+            raise InvalidSamplingConfigError("top_k must be >= 0")
         if (
             not isinstance(self.top_p, (int, float))
             or isinstance(self.top_p, bool)
             or not math.isfinite(self.top_p)
             or not 0 < self.top_p <= 1
         ):
-            raise ValueError("top_p must be finite and in the range (0, 1]")
+            raise InvalidSamplingConfigError("top_p must be finite and in the range (0, 1]")
         if self.seed is not None and (
             not isinstance(self.seed, int) or isinstance(self.seed, bool) or self.seed < 0
         ):
-            raise ValueError("seed must be a non-negative integer or None")
+            raise InvalidSamplingConfigError("seed must be a non-negative integer or None")
 
 
 def _sample_next_token(
@@ -64,7 +67,7 @@ def _sample_next_token(
 ) -> torch.Tensor:
     config.validate()
     if not torch.isfinite(logits).all():
-        raise RuntimeError("Model produced non-finite logits")
+        raise NonFiniteLogitsError("Model produced non-finite logits")
     logits = logits / config.temperature
 
     if config.top_k > 0:
@@ -76,7 +79,7 @@ def _sample_next_token(
         sorted_logits, sorted_indices = torch.sort(logits, descending=True)
         probabilities = torch.softmax(sorted_logits, dim=-1)
         if not torch.isfinite(probabilities).all():
-            raise RuntimeError("Sampling produced non-finite probabilities")
+            raise NonFiniteLogitsError("Sampling produced non-finite probabilities")
         cumulative = torch.cumsum(probabilities, dim=-1)
         remove = cumulative - probabilities > config.top_p
         sorted_logits = sorted_logits.masked_fill(remove, float("-inf"))
@@ -85,7 +88,7 @@ def _sample_next_token(
 
     probabilities = torch.softmax(logits, dim=-1)
     if not torch.isfinite(probabilities).all():
-        raise RuntimeError("Sampling produced non-finite probabilities")
+        raise NonFiniteLogitsError("Sampling produced non-finite probabilities")
     return torch.multinomial(probabilities, num_samples=1, generator=generator)
 
 
@@ -161,7 +164,7 @@ class LapisRuntime:
     def tokenize(self, text: str) -> list[int]:
         """Encode text using the checkpoint-compatible tokenizer."""
         if not isinstance(text, str):
-            raise TypeError("text must be a string")
+            raise InvalidPromptError("text must be a string")
         return self.tokenizer.encode(text, add_special_tokens=False)
 
     def get_model_info(self) -> dict[str, Any]:
@@ -184,6 +187,7 @@ class LapisRuntime:
             "tokenizer_version": self.tokenizer.VERSION,
             "vocab_size": self.tokenizer.vocab_size,
             "streaming": True,
+            "cancellation": True,
             "quantized": getattr(self, "quantized", False),
             "sampling_parameters": ["max_new_tokens", "temperature", "top_k", "top_p", "seed"],
         }
@@ -198,7 +202,15 @@ class LapisRuntime:
         device_arg = self.device if isinstance(self.device, torch.device) else torch.device(self.device)
         return torch.tensor([token_ids], dtype=torch.long, device=device_arg)
 
-    def _iter_generated_token_ids(self, prompt: str, config: SamplingConfig) -> Iterator[int]:
+    def _iter_generated_token_ids(
+        self,
+        prompt: str,
+        config: SamplingConfig,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> Iterator[int]:
+        if is_cancelled is not None and is_cancelled():
+            raise CancellationError("Generation was cancelled before starting")
+
         ids = self._prepare_ids(prompt)
         generator = None
         if config.seed is not None:
@@ -209,27 +221,43 @@ class LapisRuntime:
         context_limit = getattr(self.model, "max_position_embeddings", 512)
 
         with torch.inference_mode():
+            if is_cancelled is not None and is_cancelled():
+                raise CancellationError("Generation was cancelled")
             logits, _, kv_cache = self.model(ids, use_cache=True, start_pos=0)
             next_id = _sample_next_token(logits[:, -1, :], config, generator=generator)
             start_pos = ids.size(1)
 
             for _ in range(config.max_new_tokens):
+                if is_cancelled is not None and is_cancelled():
+                    raise CancellationError("Generation was cancelled")
                 token_id = int(next_id.item())
                 if token_id == self.tokenizer.eos_id:
                     break
                 yield token_id
                 if start_pos >= context_limit:
                     break
+                if is_cancelled is not None and is_cancelled():
+                    raise CancellationError("Generation was cancelled")
                 logits, _, kv_cache = self.model(
                     next_id, kv_cache_list=kv_cache, start_pos=start_pos, use_cache=True
                 )
                 start_pos += 1
                 next_id = _sample_next_token(logits[:, -1, :], config, generator=generator)
 
-    def generate(self, prompt: str, sampling: SamplingConfig | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        sampling: SamplingConfig | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> str:
         config = sampling or SamplingConfig()
         config.validate()
-        generated = list(self._iter_generated_token_ids(prompt, config))
+        token_iter = (
+            self._iter_generated_token_ids(prompt, config, is_cancelled=is_cancelled)
+            if is_cancelled is not None
+            else self._iter_generated_token_ids(prompt, config)
+        )
+        generated = list(token_iter)
         prompt_ids = self.tokenize(prompt)
         context_limit = getattr(self.model, "max_position_embeddings", 512)
         if len(prompt_ids) > context_limit:
@@ -237,7 +265,10 @@ class LapisRuntime:
         return self.tokenizer.decode(prompt_ids + generated, skip_special_tokens=True)
 
     def generate_with_metadata(
-        self, prompt: str, sampling: SamplingConfig | None = None
+        self,
+        prompt: str,
+        sampling: SamplingConfig | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Generate text and return response metadata (tokens, TTFT, total time, throughput)."""
         config = sampling or SamplingConfig()
@@ -247,7 +278,13 @@ class LapisRuntime:
         ttft_s: float | None = None
         generated: list[int] = []
 
-        for token_id in self._iter_generated_token_ids(prompt, config):
+        token_iter = (
+            self._iter_generated_token_ids(prompt, config, is_cancelled=is_cancelled)
+            if is_cancelled is not None
+            else self._iter_generated_token_ids(prompt, config)
+        )
+
+        for token_id in token_iter:
             if ttft_s is None:
                 ttft_s = time.perf_counter() - start_time
             generated.append(token_id)
@@ -280,7 +317,12 @@ class LapisRuntime:
             "tokens_per_second": round(tokens_per_second, 2),
         }
 
-    def stream_generate(self, prompt: str, sampling: SamplingConfig | None = None) -> Iterator[str]:
+    def stream_generate(
+        self,
+        prompt: str,
+        sampling: SamplingConfig | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+    ) -> Iterator[str]:
         """Yield text chunks only after the decoded prefix is stable."""
         config = sampling or SamplingConfig()
         config.validate()
@@ -288,7 +330,13 @@ class LapisRuntime:
         emitted = ""
         previous = ""
 
-        for token_id in self._iter_generated_token_ids(prompt, config):
+        token_iter = (
+            self._iter_generated_token_ids(prompt, config, is_cancelled=is_cancelled)
+            if is_cancelled is not None
+            else self._iter_generated_token_ids(prompt, config)
+        )
+
+        for token_id in token_iter:
             generated.append(token_id)
             current = self.tokenizer.decode(generated, skip_special_tokens=True)
             stable_length = 0
