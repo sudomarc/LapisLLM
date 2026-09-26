@@ -80,7 +80,7 @@ class CausalSelfAttention(nn.Module):
         if mask is not None:
             scores = scores.masked_fill(mask.view(1, 1, seq_len, total_seq_len), float("-inf"))
 
-        weights = torch.softmax(scores, dim=-1)
+        weights = torch.softmax(scores, dim=-1).to(v_rep.dtype)
         output = torch.matmul(weights, v_rep)
         output = output.transpose(1, 2).contiguous().view(batch, seq_len, self.hidden_size)
         return self.o_proj(output), new_kv_cache

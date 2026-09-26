@@ -25,7 +25,8 @@ Therefore:
 - capabilities metadata: ADVERTISED in `/v1/models` (including `streaming` and `cancellation`);
 - HTTP streaming: PRESENT (`stream: true` SSE `text/event-stream`);
 - structured error taxonomy: PRESENT (`lapis.inference.errors` mapped to JSON `error` payload and HTTP status codes);
-- HTTP cancellation: PRESENT (checks client disconnects and cancellation callbacks during token generation).
+- HTTP cancellation: PRESENT (checks client disconnects and cancellation callbacks during token generation);
+- mixed-precision inference: PRESENT (supports `float32`, `float16`, `bfloat16` in `LapisRuntime` and developer CLI).
 
 CHAD must not infer unsupported capabilities from the underlying Python runtime.
 

@@ -68,6 +68,7 @@ def generate(
     top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
     seed: int | None = typer.Option(None, "--seed"),
     device: str = typer.Option("auto", "--device"),
+    dtype: str = typer.Option("float32", "--dtype"),
 ) -> None:
     args = [
         "--checkpoint",
@@ -84,6 +85,8 @@ def generate(
         str(top_p),
         "--device",
         device,
+        "--dtype",
+        dtype,
     ]
     if seed is not None:
         args += ["--seed", str(seed)]
@@ -136,9 +139,10 @@ def benchmark(
     runs: int = typer.Option(5, "--runs", min=1),
     seed: int | None = typer.Option(None, "--seed"),
     quantize: bool = typer.Option(False, "--quantize"),
+    dtype: str = typer.Option("float32", "--dtype"),
 ) -> None:
     """Measure inference latency and throughput without changing the checkpoint."""
-    runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize)
+    runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize, dtype=dtype)
     sampling = SamplingConfig(max_new_tokens=tokens, seed=seed)
 
     for _ in range(warmup):
@@ -184,6 +188,7 @@ def benchmark(
     table.add_column("Metric")
     table.add_column("Value")
     table.add_row("Device", str(runtime.device))
+    table.add_row("Dtype", str(runtime.dtype).replace("torch.", ""))
     table.add_row("Quantized", str(runtime.quantized))
     table.add_row("Generated Tokens / run", str(tokens))
     table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")
