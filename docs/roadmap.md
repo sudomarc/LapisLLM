@@ -37,7 +37,7 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 - [x] Efficient KV-cache generation.
 - [ ] Better batching where justified.
 - [x] Memory/throughput benchmarks.
-- [ ] Mixed-precision inference.
+- [x] Mixed-precision inference.
 - [x] Quantized inference.
 - [ ] Long-context validation.
 - [x] Deterministic generation controls.
