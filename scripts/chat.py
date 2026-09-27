@@ -39,7 +39,7 @@ def render_header(*, runtime: LapisRuntime, color: bool) -> None:
     info = runtime.get_model_info()
     width = 66
     title = "│  L A P I S"
-    status = f"  developer inference · {info['device']} · context {info['context_length'] - 1}"
+    status = f"  developer inference · {info['device']} ({info['dtype']}) · context {info['context_length'] - 1}"
     print()
     print(paint("╭" + "─" * width + "╮", ACCENT, color))
     print(paint(title + " " * (width + 2 - len(title)) + "│", BOLD + ACCENT, color))
@@ -91,6 +91,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Developer inference and checkpoint-testing console")
     parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="float32", help="Inference precision (float32, float16, bfloat16)")
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-k", type=int, default=40)
@@ -101,7 +102,7 @@ def main() -> None:
     try:
         sampling = SamplingConfig(args.max_new_tokens, args.temperature, args.top_k, args.top_p)
         sampling.validate()
-        runtime = LapisRuntime.from_checkpoint(Path(args.checkpoint), args.device)
+        runtime = LapisRuntime.from_checkpoint(Path(args.checkpoint), args.device, dtype=args.dtype)
     except (FileNotFoundError, KeyError, RuntimeError, ValueError, OSError, TypeError) as exc:
         print(paint(f"Unable to load checkpoint: {exc}", ERROR, not args.no_color), file=sys.stderr)
         raise SystemExit(1) from exc
@@ -141,7 +142,7 @@ def main() -> None:
         if command == "/stats":
             info = runtime.get_model_info()
             context_tokens = count_context_tokens(runtime, messages)
-            print(f"checkpoint {info['checkpoint']}\ndevice {info['device']}\nparameters {info['parameter_count']:,}\nmessages {len(messages)}\ncontext {context_tokens}/{info['context_length'] - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
+            print(f"checkpoint {info['checkpoint']}\ndevice {info['device']}\ndtype {info['dtype']}\nparameters {info['parameter_count']:,}\nmessages {len(messages)}\ncontext {context_tokens}/{info['context_length'] - 1}\ngenerated {generated_tokens} tokens\nsession {time.monotonic() - session_started:.1f}s\ntemperature {sampling.temperature:.2f}\nmax tokens {sampling.max_new_tokens}\n")
             continue
         if command == "/context":
             info = runtime.get_model_info()

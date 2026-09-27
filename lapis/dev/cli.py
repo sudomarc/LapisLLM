@@ -54,8 +54,12 @@ def train(
 
 
 @app.command("evaluate")
-def evaluate(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"), device: str = typer.Option("auto", "--device")) -> None:
-    _run("scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device)
+def evaluate(
+    checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
+    device: str = typer.Option("auto", "--device"),
+    dtype: str = typer.Option("float32", "--dtype"),
+) -> None:
+    _run("scripts.evaluate", "--checkpoint", str(checkpoint), "--device", device, "--dtype", dtype)
 
 
 @app.command("generate")
@@ -68,6 +72,7 @@ def generate(
     top_p: float = typer.Option(0.95, "--top-p", min=0.01, max=1.0),
     seed: int | None = typer.Option(None, "--seed"),
     device: str = typer.Option("auto", "--device"),
+    dtype: str = typer.Option("float32", "--dtype"),
 ) -> None:
     args = [
         "--checkpoint",
@@ -84,6 +89,8 @@ def generate(
         str(top_p),
         "--device",
         device,
+        "--dtype",
+        dtype,
     ]
     if seed is not None:
         args += ["--seed", str(seed)]
@@ -94,6 +101,7 @@ def generate(
 def chat(
     checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
     device: str = typer.Option("auto", "--device"),
+    dtype: str = typer.Option("float32", "--dtype"),
     max_new_tokens: int = typer.Option(128, "--max-new-tokens", min=1),
     temperature: float = typer.Option(0.8, "--temperature", min=0.01),
     top_k: int = typer.Option(40, "--top-k", min=0),
@@ -101,7 +109,22 @@ def chat(
     no_color: bool = typer.Option(False, "--no-color"),
 ) -> None:
     """Start the developer inference/testing console."""
-    args = ["--checkpoint", str(checkpoint), "--device", device, "--max-new-tokens", str(max_new_tokens), "--temperature", str(temperature), "--top-k", str(top_k), "--top-p", str(top_p)]
+    args = [
+        "--checkpoint",
+        str(checkpoint),
+        "--device",
+        device,
+        "--dtype",
+        dtype,
+        "--max-new-tokens",
+        str(max_new_tokens),
+        "--temperature",
+        str(temperature),
+        "--top-k",
+        str(top_k),
+        "--top-p",
+        str(top_p),
+    ]
     if no_color:
         args.append("--no-color")
     _run("scripts.chat", *args)
@@ -132,13 +155,14 @@ def benchmark(
     prompt: str = typer.Option("The future of computing is", "--prompt"),
     tokens: int = typer.Option(32, "--tokens", min=1),
     device: str = typer.Option("auto", "--device"),
+    dtype: str = typer.Option("float32", "--dtype"),
     warmup: int = typer.Option(1, "--warmup", min=0),
     runs: int = typer.Option(5, "--runs", min=1),
     seed: int | None = typer.Option(None, "--seed"),
     quantize: bool = typer.Option(False, "--quantize"),
 ) -> None:
     """Measure inference latency and throughput without changing the checkpoint."""
-    runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize)
+    runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize, dtype=dtype)
     sampling = SamplingConfig(max_new_tokens=tokens, seed=seed)
 
     for _ in range(warmup):
@@ -184,6 +208,7 @@ def benchmark(
     table.add_column("Metric")
     table.add_column("Value")
     table.add_row("Device", str(runtime.device))
+    table.add_row("Dtype", str(runtime.dtype).replace("torch.", ""))
     table.add_row("Quantized", str(runtime.quantized))
     table.add_row("Generated Tokens / run", str(tokens))
     table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")

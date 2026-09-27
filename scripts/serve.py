@@ -65,12 +65,13 @@ def create_app(
     checkpoint_path: str | None = None,
     device: torch.device | str = "auto",
     runtime: LapisRuntime | None = None,
+    dtype: str | torch.dtype | None = None,
 ) -> FastAPI:
     if runtime is None:
         if checkpoint_path is None:
             raise ValueError("Either checkpoint_path or runtime must be provided")
         try:
-            runtime = LapisRuntime.from_checkpoint(checkpoint_path, str(device))
+            runtime = LapisRuntime.from_checkpoint(checkpoint_path, str(device), dtype=dtype)
         except (CheckpointLoadError, FileNotFoundError, RuntimeError, ValueError) as exc:
             raise RuntimeError(f"Unable to load serving runtime: {exc}") from exc
 
@@ -190,6 +191,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="float32", help="Serving precision (float32, float16, bfloat16)")
     args = parser.parse_args()
 
     if not 1 <= args.port <= 65535:
@@ -197,7 +199,7 @@ def main() -> None:
 
     device = resolve_device(args.device)
     try:
-        uvicorn.run(create_app(args.checkpoint, device), host=args.host, port=args.port)
+        uvicorn.run(create_app(args.checkpoint, device, dtype=args.dtype), host=args.host, port=args.port)
     except RuntimeError as exc:
         parser.error(str(exc))
 

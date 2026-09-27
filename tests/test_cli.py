@@ -57,6 +57,7 @@ def test_system_command() -> None:
 def test_dev_benchmark_command(monkeypatch) -> None:
     class MockRuntime:
         device = "cpu"
+        dtype = "float32"
         quantized = False
 
         def generate(self, prompt, sampling):
@@ -75,9 +76,9 @@ def test_dev_benchmark_command(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "lapis.dev.cli.LapisRuntime.from_checkpoint",
-        lambda checkpoint, device, quantize=False: MockRuntime(),
+        lambda checkpoint, device, quantize=False, dtype="float32": MockRuntime(),
     )
-    result = runner.invoke(app, ["dev", "benchmark", "--runs", "2", "--warmup", "1"])
+    result = runner.invoke(app, ["dev", "benchmark", "--runs", "2", "--warmup", "1", "--dtype", "float16"])
     assert result.exit_code == 0
     assert "Inference Benchmark" in result.stdout
     assert "Avg Throughput" in result.stdout

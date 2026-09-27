@@ -131,6 +131,74 @@ def test_runtime_cancellation_callback() -> None:
         runtime.generate("hello", is_cancelled=is_cancelled)
 
 
+def test_resolve_inference_dtype() -> None:
+    from lapis.inference.runtime import resolve_inference_dtype
+
+    assert resolve_inference_dtype(None) == torch.float32
+    assert resolve_inference_dtype("float32") == torch.float32
+    assert resolve_inference_dtype("fp32") == torch.float32
+    assert resolve_inference_dtype("float16") == torch.float16
+    assert resolve_inference_dtype("fp16") == torch.float16
+    assert resolve_inference_dtype("bfloat16") == torch.bfloat16
+    assert resolve_inference_dtype("bf16") == torch.bfloat16
+    assert resolve_inference_dtype(torch.float16) == torch.float16
+
+    with pytest.raises(CheckpointLoadError, match="Unsupported dtype"):
+        resolve_inference_dtype("invalid_dtype")
+
+    with pytest.raises(CheckpointLoadError, match="Invalid dtype"):
+        resolve_inference_dtype(123)  # type: ignore[arg-type]
+
+
+def test_from_checkpoint_supports_mixed_precision_dtype(tmp_path: Path) -> None:
+    from lapis.config.model_config import model_config_kwargs
+    from lapis.model.lapis_model import LapisModel
+    from lapis.tokenizer.tokenizer import Tokenizer
+
+    tokenizer_dir = tmp_path / "tokenizer"
+    tokenizer_dir.mkdir()
+    tokenizer = Tokenizer.train_from_iterator(["hello world Lapis LLM"], vocab_size=32)
+    tokenizer.save(str(tokenizer_dir))
+
+    checkpoint_path = tmp_path / "model.pt"
+    config = {
+        "model": {
+            "vocab_size": tokenizer.vocab_size,
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+            "rope_theta": 10000.0,
+            "dropout": 0.0,
+            "bias": True,
+        }
+    }
+
+    model = LapisModel(**model_config_kwargs(config))
+    torch.save(
+        {
+            "config": config,
+            "model_state_dict": model.state_dict(),
+            "tokenizer_version": tokenizer.VERSION,
+        },
+        checkpoint_path,
+    )
+
+    runtime_fp16 = LapisRuntime.from_checkpoint(checkpoint_path, device="cpu", dtype="float16")
+    assert runtime_fp16.dtype == torch.float16
+    assert runtime_fp16.get_model_info()["dtype"] == "float16"
+    assert runtime_fp16.get_capabilities()["dtype"] == "float16"
+    assert next(runtime_fp16.model.parameters()).dtype == torch.float16
+
+    runtime_bf16 = LapisRuntime.from_checkpoint(checkpoint_path, device="cpu", dtype="bfloat16")
+    assert runtime_bf16.dtype == torch.bfloat16
+    assert runtime_bf16.get_model_info()["dtype"] == "bfloat16"
+    assert runtime_bf16.get_capabilities()["dtype"] == "bfloat16"
+    assert next(runtime_bf16.model.parameters()).dtype == torch.bfloat16
+
+
 def test_from_checkpoint_supports_quantize(tmp_path: Path) -> None:
     from lapis.tokenizer.tokenizer import Tokenizer
 

@@ -60,6 +60,32 @@ class SamplingConfig:
             raise InvalidSamplingConfigError("seed must be a non-negative integer or None")
 
 
+def resolve_inference_dtype(value: str | torch.dtype | None) -> torch.dtype:
+    if value is None:
+        return torch.float32
+    if isinstance(value, torch.dtype):
+        if value in (torch.float32, torch.float16, torch.bfloat16):
+            return value
+        raise CheckpointLoadError(f"Unsupported dtype: {value}")
+    if not isinstance(value, str):
+        raise CheckpointLoadError(f"Invalid dtype specification: {value}")
+
+    normalized = value.strip().lower()
+    mapping = {
+        "float32": torch.float32,
+        "fp32": torch.float32,
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+    }
+    if normalized in mapping:
+        return mapping[normalized]
+    raise CheckpointLoadError(
+        f"Unsupported dtype: {value!r}. Choose from 'float32', 'float16', 'bfloat16'."
+    )
+
+
 def _sample_next_token(
     logits: torch.Tensor,
     config: SamplingConfig,
@@ -68,7 +94,7 @@ def _sample_next_token(
     config.validate()
     if not torch.isfinite(logits).all():
         raise NonFiniteLogitsError("Model produced non-finite logits")
-    logits = logits / config.temperature
+    logits = logits.float() / config.temperature
 
     if config.top_k > 0:
         values, _ = torch.topk(logits, min(config.top_k, logits.size(-1)))
@@ -114,12 +140,14 @@ class LapisRuntime:
         device: torch.device | str,
         checkpoint: Path,
         quantized: bool = False,
+        dtype: str | torch.dtype | None = torch.float32,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.checkpoint = checkpoint
         self.quantized = quantized
+        self.dtype = resolve_inference_dtype(dtype)
 
     @classmethod
     def from_checkpoint(
@@ -127,6 +155,7 @@ class LapisRuntime:
         checkpoint: str | Path,
         device: str = "auto",
         quantize: bool = False,
+        dtype: str | torch.dtype | None = None,
     ) -> "LapisRuntime":
         path = Path(checkpoint)
         if not path.exists() or not path.is_file():
@@ -134,13 +163,14 @@ class LapisRuntime:
 
         try:
             target = resolve_device(device)
+            target_dtype = resolve_inference_dtype(dtype)
             data = torch.load(path, map_location=target, weights_only=True)
             tokenizer_path = path.parent / "tokenizer"
             if not tokenizer_path.is_dir():
                 raise CheckpointLoadError(f"Tokenizer directory not found: {tokenizer_path}")
             tokenizer = Tokenizer.load(str(tokenizer_path))
             _validate_checkpoint_tokenizer(data, tokenizer)
-            model = LapisModel(**model_config_kwargs(data["config"])).to(target)
+            model = LapisModel(**model_config_kwargs(data["config"])).to(device=target, dtype=target_dtype)
             model.load_state_dict(data["model_state_dict"])
             model.eval()
 
@@ -155,7 +185,7 @@ class LapisRuntime:
                 )
                 quantized = True
 
-            return cls(model, tokenizer, target, path, quantized=quantized)
+            return cls(model, tokenizer, target, path, quantized=quantized, dtype=target_dtype)
         except CheckpointLoadError:
             raise
         except (KeyError, RuntimeError, ValueError, OSError, TypeError) as exc:
@@ -169,9 +199,11 @@ class LapisRuntime:
 
     def get_model_info(self) -> dict[str, Any]:
         """Return stable runtime metadata without exposing model internals."""
+        dtype_str = str(getattr(self, "dtype", torch.float32)).replace("torch.", "")
         return {
             "checkpoint": str(self.checkpoint),
             "device": str(self.device),
+            "dtype": dtype_str,
             "vocab_size": self.tokenizer.vocab_size,
             "context_length": getattr(self.model, "max_position_embeddings", 512),
             "parameter_count": sum(parameter.numel() for parameter in self.model.parameters()),
@@ -182,10 +214,12 @@ class LapisRuntime:
 
     def get_capabilities(self) -> dict[str, Any]:
         """Return capabilities metadata exposed to consumer applications like CHAD."""
+        dtype_str = str(getattr(self, "dtype", torch.float32)).replace("torch.", "")
         return {
             "context_length": getattr(self.model, "max_position_embeddings", 512),
             "tokenizer_version": self.tokenizer.VERSION,
             "vocab_size": self.tokenizer.vocab_size,
+            "dtype": dtype_str,
             "streaming": True,
             "cancellation": True,
             "quantized": getattr(self, "quantized", False),

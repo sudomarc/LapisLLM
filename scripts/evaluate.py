@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 
 from lapis.config.base import resolve_device
 from lapis.config.model_config import ModelConfig, model_config_kwargs
+from lapis.inference.runtime import resolve_inference_dtype
 from lapis.model.lapis_model import LapisModel
 from lapis.tokenizer.tokenizer import Tokenizer
 from scripts.generate import validate_checkpoint_tokenizer
@@ -23,6 +24,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", default="checkpoints/latest.pt")
     parser.add_argument("--data", default=None)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="float32", help="Evaluation precision (float32, float16, bfloat16)")
     args = parser.parse_args()
 
     checkpoint_path = Path(args.checkpoint)
@@ -30,6 +32,7 @@ def main() -> None:
         parser.error(f"Checkpoint not found: {checkpoint_path}")
 
     device = resolve_device(args.device)
+    dtype = resolve_inference_dtype(args.dtype)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     tokenizer_path = checkpoint_path.parent / "tokenizer"
     if not tokenizer_path.exists():
@@ -38,7 +41,7 @@ def main() -> None:
     validate_checkpoint_tokenizer(checkpoint, tokenizer)
 
     config = checkpoint["config"]
-    model = LapisModel(**model_config_kwargs(config)).to(device)
+    model = LapisModel(**model_config_kwargs(config)).to(device=device, dtype=dtype)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
