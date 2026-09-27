@@ -128,6 +128,16 @@ def generate(model, tokenizer, prompt, max_new_tokens, temperature, top_k, top_p
     return tokenizer.decode(token_ids + generated, skip_special_tokens=True)
 
 
+_DTYPE_MAP = {
+    "float32": torch.float32,
+    "fp32": torch.float32,
+    "float16": torch.float16,
+    "fp16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+}
+
+
 def main() -> None:
     """Run the command-line generation utility."""
     parser = argparse.ArgumentParser(description="Generate text with Lapis")
@@ -144,6 +154,7 @@ def main() -> None:
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--dtype", default="float32")
     args = parser.parse_args()
 
     try:
@@ -174,7 +185,12 @@ def main() -> None:
     tokenizer = Tokenizer.load(str(tokenizer_dir))
     validate_checkpoint_tokenizer(checkpoint_data, tokenizer)
 
-    model = LapisModel(**model_config_kwargs(checkpoint_data["config"])).to(device)
+    dtype_str = args.dtype.lower()
+    if dtype_str not in _DTYPE_MAP:
+        parser.error(f"Unsupported dtype: {args.dtype}")
+    target_dtype = _DTYPE_MAP[dtype_str]
+
+    model = LapisModel(**model_config_kwargs(checkpoint_data["config"])).to(device=device, dtype=target_dtype)
     model.load_state_dict(checkpoint_data["model_state_dict"])
     model.eval()
 
