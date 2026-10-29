@@ -26,7 +26,8 @@ Therefore:
 - HTTP streaming: PRESENT (`stream: true` SSE `text/event-stream`);
 - structured error taxonomy: PRESENT (`lapis.inference.errors` mapped to JSON `error` payload and HTTP status codes);
 - HTTP cancellation: PRESENT (checks client disconnects and cancellation callbacks during token generation);
-- mixed-precision inference: PRESENT (supports `float32`, `float16`, `bfloat16` in `LapisRuntime` and developer CLI).
+- mixed-precision inference: PRESENT (supports `float32`, `float16`, `bfloat16` in `LapisRuntime` and developer CLI);
+- batched inference & prompt controls: PRESENT (`generate_batch`, `generate_batch_with_metadata`, `validate_prompt_length`, `truncate_prompt`, `batch_generation` capability in `LapisRuntime` and `--batch-size` in developer CLI benchmark).
 
 CHAD must not infer unsupported capabilities from the underlying Python runtime.
 

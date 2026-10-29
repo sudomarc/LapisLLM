@@ -133,6 +133,7 @@ def inspect(checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--ch
 def benchmark(
     checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
     prompt: str = typer.Option("The future of computing is", "--prompt"),
+    batch_size: int = typer.Option(1, "--batch-size", min=1),
     tokens: int = typer.Option(32, "--tokens", min=1),
     device: str = typer.Option("auto", "--device"),
     warmup: int = typer.Option(1, "--warmup", min=0),
@@ -146,7 +147,10 @@ def benchmark(
     sampling = SamplingConfig(max_new_tokens=tokens, seed=seed)
 
     for _ in range(warmup):
-        runtime.generate(prompt, sampling)
+        if batch_size > 1:
+            runtime.generate_batch([prompt] * batch_size, sampling)
+        else:
+            runtime.generate(prompt, sampling)
 
     latencies_ms: list[float] = []
     ttfts_ms: list[float] = []
@@ -154,8 +158,12 @@ def benchmark(
     sample_text = ""
 
     for _ in range(runs):
-        meta = runtime.generate_with_metadata(prompt, sampling)
-        sample_text = meta["text"]
+        if batch_size > 1:
+            meta = runtime.generate_batch_with_metadata([prompt] * batch_size, sampling)
+            sample_text = meta["texts"][0] if meta["texts"] else ""
+        else:
+            meta = runtime.generate_with_metadata(prompt, sampling)
+            sample_text = meta["text"]
         latencies_ms.append(meta["total_time_ms"])
         ttfts_ms.append(meta["time_to_first_token_ms"])
         rates.append(meta["tokens_per_second"])
@@ -190,7 +198,8 @@ def benchmark(
     table.add_row("Device", str(runtime.device))
     table.add_row("Dtype", str(runtime.dtype).replace("torch.", ""))
     table.add_row("Quantized", str(runtime.quantized))
-    table.add_row("Generated Tokens / run", str(tokens))
+    table.add_row("Batch Size", str(batch_size))
+    table.add_row("Generated Tokens / run", str(tokens * batch_size if batch_size > 1 else tokens))
     table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")
     table.add_row("Avg TTFT (ms)", f"{avg_ttft:.2f}")
     table.add_row("p50 Latency (ms)", f"{p50_latency:.2f}")

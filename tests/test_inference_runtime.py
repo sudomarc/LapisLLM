@@ -197,7 +197,59 @@ def test_runtime_get_capabilities() -> None:
     assert caps["vocab_size"] == 8
     assert caps["streaming"] is True
     assert caps["cancellation"] is True
+    assert caps["batch_generation"] is True
     assert "temperature" in caps["sampling_parameters"]
+
+
+def test_validate_prompt_length() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    assert runtime.validate_prompt_length("short") is False
+    with pytest.raises(InvalidPromptError, match="prompt must be a string"):
+        runtime.validate_prompt_length(123)  # type: ignore[arg-type]
+
+    short_runtime = make_runtime()
+    assert short_runtime.validate_prompt_length("hello") is True
+
+
+def test_truncate_prompt_false_raises_error() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    with pytest.raises(InvalidPromptError, match="exceeds model context limit"):
+        runtime.generate("long prompt", truncate_prompt=False)
+
+    with pytest.raises(InvalidPromptError, match="exceeds model context limit"):
+        runtime.generate_batch(["long prompt"], truncate_prompt=False)
+
+
+def test_generate_batch_and_metadata() -> None:
+    class FakeModelWithForward:
+        max_position_embeddings = 16
+        vocab_size = 8
+
+        def parameters(self):
+            return iter(())
+
+        def __call__(self, input_ids, labels=None, kv_cache_list=None, start_pos=0, use_cache=False):
+            batch_size, seq_len = input_ids.shape
+            logits = torch.randn(batch_size, seq_len, self.vocab_size)
+            return logits, None, []
+
+    runtime = make_runtime()
+    runtime.model = FakeModelWithForward()
+
+    meta = runtime.generate_batch_with_metadata(
+        ["hello", "world"], sampling=SamplingConfig(max_new_tokens=4, seed=42)
+    )
+    assert len(meta["texts"]) == 2
+    assert len(meta["prompt_tokens"]) == 2
+    assert len(meta["completion_tokens"]) == 2
+    assert len(meta["total_tokens"]) == 2
+    assert meta["time_to_first_token_ms"] >= 0
+    assert meta["total_time_ms"] >= 0
+    assert meta["tokens_per_second"] >= 0
+
+    texts = runtime.generate_batch(["hello", "world"], sampling=SamplingConfig(max_new_tokens=4, seed=42))
+    assert len(texts) == 2
+    assert isinstance(texts[0], str)
 
 
 def test_prepare_ids_truncates_long_prompts_to_context_limit() -> None:

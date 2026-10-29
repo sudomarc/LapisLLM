@@ -84,3 +84,34 @@ def test_dev_benchmark_command(monkeypatch) -> None:
     assert "Avg Throughput" in result.stdout
     assert "p50 Latency" in result.stdout
     assert "p95 Latency" in result.stdout
+
+
+def test_dev_benchmark_batch_size_command(monkeypatch) -> None:
+    class MockRuntime:
+        device = "cpu"
+        dtype = "float32"
+        quantized = False
+
+        def generate_batch(self, prompts, sampling):
+            return ["output"] * len(prompts)
+
+        def generate_batch_with_metadata(self, prompts, sampling):
+            return {
+                "texts": ["benchmark text"] * len(prompts),
+                "prompt_tokens": [5] * len(prompts),
+                "completion_tokens": [10] * len(prompts),
+                "total_tokens": [15] * len(prompts),
+                "time_to_first_token_ms": 15.0,
+                "total_time_ms": 60.0,
+                "tokens_per_second": 333.33,
+            }
+
+    monkeypatch.setattr(
+        "lapis.dev.cli.LapisRuntime.from_checkpoint",
+        lambda checkpoint, device, quantize=False, dtype="float32": MockRuntime(),
+    )
+    result = runner.invoke(app, ["dev", "benchmark", "--batch-size", "2", "--runs", "2", "--warmup", "1"])
+    assert result.exit_code == 0
+    assert "Inference Benchmark" in result.stdout
+    assert "Batch Size" in result.stdout
+    assert "2" in result.stdout
