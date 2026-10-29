@@ -201,6 +201,16 @@ class LapisRuntime:
             raise InvalidPromptError("text must be a string")
         return self.tokenizer.encode(text, add_special_tokens=False)
 
+    def validate_prompt_length(self, prompt: str) -> bool:
+        """Check if the prompt token length is within the model context limit."""
+        if not isinstance(prompt, str):
+            raise InvalidPromptError("prompt must be a string")
+        token_ids = self.tokenize(prompt)
+        if not token_ids:
+            token_ids = [self.tokenizer.bos_id]
+        context_limit = getattr(self.model, "max_position_embeddings", 512)
+        return len(token_ids) <= context_limit
+
     def get_model_info(self) -> dict[str, Any]:
         """Return stable runtime metadata without exposing model internals."""
         dtype_str = str(getattr(self, "dtype", torch.float32)).replace("torch.", "")
@@ -225,18 +235,23 @@ class LapisRuntime:
             "vocab_size": self.tokenizer.vocab_size,
             "streaming": True,
             "cancellation": True,
+            "batch_generation": True,
             "quantized": getattr(self, "quantized", False),
             "dtype": dtype_str,
             "supported_dtypes": ["float32", "float16", "bfloat16"],
             "sampling_parameters": ["max_new_tokens", "temperature", "top_k", "top_p", "seed"],
         }
 
-    def _prepare_ids(self, prompt: str) -> torch.Tensor:
+    def _prepare_ids(self, prompt: str, truncate_prompt: bool = True) -> torch.Tensor:
         token_ids = self.tokenize(prompt)
         if not token_ids:
             token_ids = [self.tokenizer.bos_id]
         context_limit = getattr(self.model, "max_position_embeddings", 512)
         if len(token_ids) > context_limit:
+            if not truncate_prompt:
+                raise InvalidPromptError(
+                    f"Prompt token length ({len(token_ids)}) exceeds model context limit ({context_limit})."
+                )
             token_ids = token_ids[-context_limit:]
         device_arg = self.device if isinstance(self.device, torch.device) else torch.device(self.device)
         return torch.tensor([token_ids], dtype=torch.long, device=device_arg)
@@ -246,11 +261,12 @@ class LapisRuntime:
         prompt: str,
         config: SamplingConfig,
         is_cancelled: Callable[[], bool] | None = None,
+        truncate_prompt: bool = True,
     ) -> Iterator[int]:
         if is_cancelled is not None and is_cancelled():
             raise CancellationError("Generation was cancelled before starting")
 
-        ids = self._prepare_ids(prompt)
+        ids = self._prepare_ids(prompt, truncate_prompt=truncate_prompt)
         generator = None
         if config.seed is not None:
             dev_type = self.device.type if isinstance(self.device, torch.device) else str(self.device)
@@ -288,16 +304,21 @@ class LapisRuntime:
         prompt: str,
         sampling: SamplingConfig | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        truncate_prompt: bool = True,
     ) -> str:
         config = sampling or SamplingConfig()
         config.validate()
         token_iter = (
-            self._iter_generated_token_ids(prompt, config, is_cancelled=is_cancelled)
-            if is_cancelled is not None
-            else self._iter_generated_token_ids(prompt, config)
+            self._iter_generated_token_ids(prompt, config)
+            if is_cancelled is None and truncate_prompt
+            else self._iter_generated_token_ids(
+                prompt, config, is_cancelled=is_cancelled, truncate_prompt=truncate_prompt
+            )
         )
         generated = list(token_iter)
         prompt_ids = self.tokenize(prompt)
+        if not prompt_ids:
+            prompt_ids = [self.tokenizer.bos_id]
         context_limit = getattr(self.model, "max_position_embeddings", 512)
         if len(prompt_ids) > context_limit:
             prompt_ids = prompt_ids[-context_limit:]
@@ -308,6 +329,7 @@ class LapisRuntime:
         prompt: str,
         sampling: SamplingConfig | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        truncate_prompt: bool = True,
     ) -> dict[str, Any]:
         """Generate text and return response metadata (tokens, TTFT, total time, throughput)."""
         config = sampling or SamplingConfig()
@@ -318,9 +340,11 @@ class LapisRuntime:
         generated: list[int] = []
 
         token_iter = (
-            self._iter_generated_token_ids(prompt, config, is_cancelled=is_cancelled)
-            if is_cancelled is not None
-            else self._iter_generated_token_ids(prompt, config)
+            self._iter_generated_token_ids(prompt, config)
+            if is_cancelled is None and truncate_prompt
+            else self._iter_generated_token_ids(
+                prompt, config, is_cancelled=is_cancelled, truncate_prompt=truncate_prompt
+            )
         )
 
         for token_id in token_iter:
@@ -333,6 +357,8 @@ class LapisRuntime:
             ttft_s = total_time_s
 
         prompt_ids = self.tokenize(prompt)
+        if not prompt_ids:
+            prompt_ids = [self.tokenizer.bos_id]
         context_limit = getattr(self.model, "max_position_embeddings", 512)
         if len(prompt_ids) > context_limit:
             prompt_ids = prompt_ids[-context_limit:]
@@ -356,11 +382,171 @@ class LapisRuntime:
             "tokens_per_second": round(tokens_per_second, 2),
         }
 
+    def generate_batch(
+        self,
+        prompts: list[str],
+        sampling: SamplingConfig | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+        truncate_prompt: bool = True,
+    ) -> list[str]:
+        """Generate completions for a batch of prompts."""
+        if not isinstance(prompts, list):
+            raise InvalidPromptError("prompts must be a list of strings")
+        if not prompts:
+            return []
+        meta = self.generate_batch_with_metadata(
+            prompts, sampling=sampling, is_cancelled=is_cancelled, truncate_prompt=truncate_prompt
+        )
+        return meta["texts"]
+
+    def generate_batch_with_metadata(
+        self,
+        prompts: list[str],
+        sampling: SamplingConfig | None = None,
+        is_cancelled: Callable[[], bool] | None = None,
+        truncate_prompt: bool = True,
+    ) -> dict[str, Any]:
+        """Generate completions for a batch of prompts and return detailed batch metadata."""
+        if not isinstance(prompts, list):
+            raise InvalidPromptError("prompts must be a list of strings")
+        if not prompts:
+            return {
+                "texts": [],
+                "prompt_tokens": [],
+                "completion_tokens": [],
+                "total_tokens": [],
+                "time_to_first_token_ms": 0.0,
+                "total_time_ms": 0.0,
+                "tokens_per_second": 0.0,
+            }
+
+        config = sampling or SamplingConfig()
+        config.validate()
+
+        if is_cancelled is not None and is_cancelled():
+            raise CancellationError("Generation was cancelled before starting")
+
+        context_limit = getattr(self.model, "max_position_embeddings", 512)
+        pad_id = getattr(self.tokenizer, "pad_id", self.tokenizer.bos_id)
+
+        prompt_ids_list: list[list[int]] = []
+        for prompt in prompts:
+            if not isinstance(prompt, str):
+                raise InvalidPromptError("All prompts in batch must be strings")
+            t_ids = self.tokenize(prompt)
+            if not t_ids:
+                t_ids = [self.tokenizer.bos_id]
+            if len(t_ids) > context_limit:
+                if not truncate_prompt:
+                    raise InvalidPromptError(
+                        f"Prompt token length ({len(t_ids)}) exceeds model context limit ({context_limit})."
+                    )
+                t_ids = t_ids[-context_limit:]
+            prompt_ids_list.append(t_ids)
+
+        batch_size = len(prompts)
+        max_prompt_len = max(len(ids) for ids in prompt_ids_list)
+
+        padded_prompts = []
+        for ids in prompt_ids_list:
+            pad_count = max_prompt_len - len(ids)
+            padded = [pad_id] * pad_count + ids
+            padded_prompts.append(padded)
+
+        device_arg = self.device if isinstance(self.device, torch.device) else torch.device(self.device)
+        ids_tensor = torch.tensor(padded_prompts, dtype=torch.long, device=device_arg)
+
+        generator = None
+        if config.seed is not None:
+            dev_type = self.device.type if isinstance(self.device, torch.device) else str(self.device)
+            generator = torch.Generator(device=dev_type)
+            generator.manual_seed(config.seed)
+
+        start_time = time.perf_counter()
+        ttft_s: float | None = None
+
+        generated_per_prompt: list[list[int]] = [[] for _ in range(batch_size)]
+        finished = [False] * batch_size
+
+        with torch.inference_mode():
+            if is_cancelled is not None and is_cancelled():
+                raise CancellationError("Generation was cancelled")
+
+            logits, _, kv_cache = self.model(ids_tensor, use_cache=True, start_pos=0)
+            ttft_s = time.perf_counter() - start_time
+
+            next_ids = _sample_next_token(logits[:, -1, :], config, generator=generator)
+            start_pos = max_prompt_len
+
+            for _ in range(config.max_new_tokens):
+                if is_cancelled is not None and is_cancelled():
+                    raise CancellationError("Generation was cancelled")
+
+                all_done = True
+                for i in range(batch_size):
+                    if not finished[i]:
+                        token_id = int(next_ids[i, 0].item())
+                        if token_id == self.tokenizer.eos_id:
+                            finished[i] = True
+                        else:
+                            generated_per_prompt[i].append(token_id)
+                            all_done = False
+
+                if all_done or start_pos >= context_limit:
+                    break
+
+                if is_cancelled is not None and is_cancelled():
+                    raise CancellationError("Generation was cancelled")
+
+                logits, _, kv_cache = self.model(
+                    next_ids, kv_cache_list=kv_cache, start_pos=start_pos, use_cache=True
+                )
+                start_pos += 1
+                next_ids = _sample_next_token(logits[:, -1, :], config, generator=generator)
+
+        total_time_s = time.perf_counter() - start_time
+        if ttft_s is None:
+            ttft_s = total_time_s
+
+        decoded_texts = []
+        completion_tokens_list = []
+        prompt_tokens_list = []
+        total_tokens_list = []
+        total_completion_tokens = 0
+
+        for i in range(batch_size):
+            p_ids = prompt_ids_list[i]
+            g_ids = generated_per_prompt[i]
+            text = self.tokenizer.decode(p_ids + g_ids, skip_special_tokens=True)
+            decoded_texts.append(text)
+
+            p_tok = len(p_ids)
+            c_tok = len(g_ids)
+            prompt_tokens_list.append(p_tok)
+            completion_tokens_list.append(c_tok)
+            total_tokens_list.append(p_tok + c_tok)
+            total_completion_tokens += c_tok
+
+        tokens_per_second = (
+            total_completion_tokens / total_time_s if total_time_s > 0 else 0.0
+        )
+
+        return {
+            "texts": decoded_texts,
+            "prompt_tokens": prompt_tokens_list,
+            "completion_tokens": completion_tokens_list,
+            "total_tokens": total_tokens_list,
+            "time_to_first_token_ms": round(ttft_s * 1000, 2),
+            "total_time_ms": round(total_time_s * 1000, 2),
+            "tokens_per_second": round(tokens_per_second, 2),
+        }
+
     def stream_generate(
         self,
         prompt: str,
         sampling: SamplingConfig | None = None,
         is_cancelled: Callable[[], bool] | None = None,
+        truncate_prompt: bool = True,
     ) -> Iterator[str]:
         """Yield text chunks only after the decoded prefix is stable."""
         config = sampling or SamplingConfig()
@@ -370,9 +556,11 @@ class LapisRuntime:
         previous = ""
 
         token_iter = (
-            self._iter_generated_token_ids(prompt, config, is_cancelled=is_cancelled)
-            if is_cancelled is not None
-            else self._iter_generated_token_ids(prompt, config)
+            self._iter_generated_token_ids(prompt, config)
+            if is_cancelled is None and truncate_prompt
+            else self._iter_generated_token_ids(
+                prompt, config, is_cancelled=is_cancelled, truncate_prompt=truncate_prompt
+            )
         )
 
         for token_id in token_iter:
