@@ -35,14 +35,14 @@ The roadmap therefore prioritizes **model quality, runtime correctness, serving 
 ## Phase 2 — Inference correctness and efficiency
 
 - [x] Efficient KV-cache generation.
-- [ ] Better batching where justified.
+- [x] Better batching where justified.
 - [x] Memory/throughput benchmarks.
 - [x] Mixed-precision inference.
 - [x] Quantized inference.
-- [ ] Long-context validation.
+- [x] Long-context validation.
 - [x] Deterministic generation controls.
 - [x] p50/p95 latency tracking.
-- [ ] Regression benchmarks.
+- [x] Regression benchmarks.
 
 ## Phase 3 — Training reproducibility
 

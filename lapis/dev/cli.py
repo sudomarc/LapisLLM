@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -134,19 +135,28 @@ def benchmark(
     checkpoint: Path = typer.Option(Path("checkpoints/latest.pt"), "--checkpoint"),
     prompt: str = typer.Option("The future of computing is", "--prompt"),
     tokens: int = typer.Option(32, "--tokens", min=1),
+    batch_size: int = typer.Option(1, "--batch-size", min=1),
     device: str = typer.Option("auto", "--device"),
     warmup: int = typer.Option(1, "--warmup", min=0),
     runs: int = typer.Option(5, "--runs", min=1),
     seed: int | None = typer.Option(None, "--seed"),
     quantize: bool = typer.Option(False, "--quantize"),
     dtype: str = typer.Option("float32", "--dtype"),
+    save_baseline: Path | None = typer.Option(None, "--save-baseline"),
+    compare_baseline: Path | None = typer.Option(None, "--compare-baseline"),
+    max_regression_pct: float = typer.Option(15.0, "--max-regression-pct", min=0.0),
 ) -> None:
     """Measure inference latency and throughput without changing the checkpoint."""
     runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize, dtype=dtype)
     sampling = SamplingConfig(max_new_tokens=tokens, seed=seed)
 
+    prompts = [prompt] * batch_size
+
     for _ in range(warmup):
-        runtime.generate(prompt, sampling)
+        if batch_size == 1:
+            runtime.generate(prompt, sampling)
+        else:
+            runtime.generate_batch(prompts, sampling)
 
     latencies_ms: list[float] = []
     ttfts_ms: list[float] = []
@@ -154,11 +164,22 @@ def benchmark(
     sample_text = ""
 
     for _ in range(runs):
-        meta = runtime.generate_with_metadata(prompt, sampling)
-        sample_text = meta["text"]
-        latencies_ms.append(meta["total_time_ms"])
-        ttfts_ms.append(meta["time_to_first_token_ms"])
-        rates.append(meta["tokens_per_second"])
+        if batch_size == 1:
+            meta = runtime.generate_with_metadata(prompt, sampling)
+            sample_text = meta["text"]
+            latencies_ms.append(meta["total_time_ms"])
+            ttfts_ms.append(meta["time_to_first_token_ms"])
+            rates.append(meta["tokens_per_second"])
+        else:
+            metas = runtime.generate_batch_with_metadata(prompts, sampling)
+            sample_text = metas[0]["text"]
+            total_comp_tokens = sum(m["completion_tokens"] for m in metas)
+            max_time_ms = max(m["total_time_ms"] for m in metas)
+            max_ttft_ms = max(m["time_to_first_token_ms"] for m in metas)
+            rate = (total_comp_tokens / (max_time_ms / 1000.0)) if max_time_ms > 0 else 0.0
+            latencies_ms.append(max_time_ms)
+            ttfts_ms.append(max_ttft_ms)
+            rates.append(rate)
 
     latencies_ms.sort()
     ttfts_ms.sort()
@@ -184,13 +205,14 @@ def benchmark(
         except ImportError:
             pass
 
-    table = Table(title=f"Inference Benchmark ({runs} runs, warmup={warmup})")
+    table = Table(title=f"Inference Benchmark ({runs} runs, batch_size={batch_size}, warmup={warmup})")
     table.add_column("Metric")
     table.add_column("Value")
     table.add_row("Device", str(runtime.device))
     table.add_row("Dtype", str(runtime.dtype).replace("torch.", ""))
+    table.add_row("Batch Size", str(batch_size))
     table.add_row("Quantized", str(runtime.quantized))
-    table.add_row("Generated Tokens / run", str(tokens))
+    table.add_row("Generated Tokens / run", str(tokens * batch_size))
     table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")
     table.add_row("Avg TTFT (ms)", f"{avg_ttft:.2f}")
     table.add_row("p50 Latency (ms)", f"{p50_latency:.2f}")
@@ -200,6 +222,42 @@ def benchmark(
 
     console.print(table)
     console.print(f"[dim]Sample Output:[/dim] {sample_text}")
+
+    result_data = {
+        "checkpoint": str(checkpoint),
+        "batch_size": batch_size,
+        "avg_throughput_tok_s": round(avg_rate, 2),
+        "avg_ttft_ms": round(avg_ttft, 2),
+        "p50_latency_ms": round(p50_latency, 2),
+        "p95_latency_ms": round(p95_latency, 2),
+        "device": str(runtime.device),
+        "dtype": str(runtime.dtype).replace("torch.", ""),
+        "quantized": getattr(runtime, "quantized", False),
+    }
+
+    if save_baseline:
+        save_baseline.parent.mkdir(parents=True, exist_ok=True)
+        save_baseline.write_text(json.dumps(result_data, indent=2), encoding="utf-8")
+        console.print(f"[green]Saved benchmark baseline to {save_baseline}[/green]")
+
+    if compare_baseline:
+        if not compare_baseline.is_file():
+            raise typer.BadParameter(f"Baseline file not found: {compare_baseline}")
+        baseline = json.loads(compare_baseline.read_text(encoding="utf-8"))
+        base_rate = float(baseline.get("avg_throughput_tok_s", 0.0))
+        min_allowed_rate = base_rate * (1.0 - max_regression_pct / 100.0)
+
+        diff_pct = ((avg_rate - base_rate) / base_rate * 100.0) if base_rate > 0 else 0.0
+        console.print(
+            f"Baseline comparison: current={avg_rate:.2f} tok/s vs baseline={base_rate:.2f} tok/s ({diff_pct:+.1f}%)"
+        )
+        if avg_rate < min_allowed_rate:
+            console.print(
+                f"[red]Performance regression detected! Current ({avg_rate:.2f}) < threshold ({min_allowed_rate:.2f})[/red]"
+            )
+            raise typer.Exit(code=1)
+        else:
+            console.print("[green]Performance comparison passed (within regression threshold).[/green]")
 
 
 @app.command("publish")
