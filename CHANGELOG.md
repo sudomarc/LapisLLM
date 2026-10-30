@@ -16,6 +16,9 @@ All notable changes to LapisLLM are documented here.
 
 ### Added
 
+- Added batched inference (`generate_batch`, `generate_batch_with_metadata`) and prompt context length validation (`validate_prompt_length`) to `LapisRuntime`.
+- Updated public runtime capabilities metadata to expose `batching` support (`batching: True`, `max_batch_size: 32`).
+- Enhanced `lapis dev benchmark` developer CLI command with `--batch-size`, `--save-baseline`, `--compare-baseline`, and `--max-regression-pct` regression tracking flags.
 - Added regression coverage for the non-interactive Colab contract, corpus budgeting, stale-cache invalidation, smoke-test budget, and checkpoint artifact separation.
 - Added a repository documentation gate requiring relevant documentation and applicable agent skills to be read before every repository change.
 

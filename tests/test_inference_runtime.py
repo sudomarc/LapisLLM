@@ -225,3 +225,83 @@ def test_stream_generate_buffers_unstable_decoding(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 4]))
     runtime.tokenizer.decode = lambda ids, skip_special_tokens=True: decoded[tuple(ids)]
     assert "".join(runtime.stream_generate("hello", SamplingConfig(max_new_tokens=2))) == "é"
+
+
+def test_validate_prompt_length_bounds() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    with pytest.raises(ContextLengthExceededError, match="exceeds maximum context length"):
+        runtime.validate_prompt_length("long prompt", truncate_prompt=False)
+
+    truncated = runtime.validate_prompt_length("long prompt", truncate_prompt=True)
+    assert len(truncated) == 16
+    assert truncated == list(range(4, 20))
+
+
+def test_generate_batch_and_metadata_validation() -> None:
+    runtime = make_runtime()
+    with pytest.raises(InvalidPromptError, match="non-empty list"):
+        runtime.generate_batch([])
+    with pytest.raises(InvalidPromptError, match="must be strings"):
+        runtime.generate_batch(["hello", 123])  # type: ignore[list-item]
+
+
+def test_generate_batch_real_model(tmp_path: Path) -> None:
+    from lapis.config.model_config import model_config_kwargs
+    from lapis.model.lapis_model import LapisModel
+    from lapis.tokenizer.tokenizer import Tokenizer
+
+    tokenizer_dir = tmp_path / "tokenizer"
+    tokenizer_dir.mkdir()
+    tokenizer = Tokenizer.train_from_iterator(["hello world Lapis LLM batch test"], vocab_size=32)
+    tokenizer.save(str(tokenizer_dir))
+
+    checkpoint_path = tmp_path / "model.pt"
+    config = {
+        "model": {
+            "vocab_size": tokenizer.vocab_size,
+            "hidden_size": 16,
+            "intermediate_size": 32,
+            "num_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "max_position_embeddings": 32,
+            "rope_theta": 10000.0,
+            "dropout": 0.0,
+            "bias": True,
+        }
+    }
+    model = LapisModel(**model_config_kwargs(config))
+    torch.save(
+        {
+            "config": config,
+            "model_state_dict": model.state_dict(),
+            "tokenizer_version": tokenizer.VERSION,
+        },
+        checkpoint_path,
+    )
+
+    runtime = LapisRuntime.from_checkpoint(checkpoint_path, device="cpu")
+    prompts = ["hello world", "Lapis batch test"]
+    sampling = SamplingConfig(max_new_tokens=4, seed=42)
+
+    results = runtime.generate_batch_with_metadata(prompts, sampling=sampling)
+    assert len(results) == 2
+    for res in results:
+        assert "text" in res
+        assert res["prompt_tokens"] > 0
+        assert 0 < res["completion_tokens"] <= 4
+        assert res["total_tokens"] == res["prompt_tokens"] + res["completion_tokens"]
+        assert res["time_to_first_token_ms"] >= 0
+        assert res["total_time_ms"] >= 0
+
+    batch_texts = runtime.generate_batch(prompts, sampling=sampling)
+    assert len(batch_texts) == 2
+    assert isinstance(batch_texts[0], str)
+    assert isinstance(batch_texts[1], str)
+
+
+def test_get_capabilities_includes_batching() -> None:
+    runtime = make_runtime()
+    caps = runtime.get_capabilities()
+    assert caps["batching"] is True
+    assert caps["max_batch_size"] == 32
