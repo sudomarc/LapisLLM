@@ -84,3 +84,70 @@ def test_dev_benchmark_command(monkeypatch) -> None:
     assert "Avg Throughput" in result.stdout
     assert "p50 Latency" in result.stdout
     assert "p95 Latency" in result.stdout
+
+
+def test_dev_benchmark_batch_size_and_baseline(monkeypatch, tmp_path) -> None:
+    class MockRuntime:
+        device = "cpu"
+        dtype = "float32"
+        quantized = False
+
+        def generate_batch(self, prompts, sampling):
+            return ["batch output"] * len(prompts)
+
+        def generate_batch_with_metadata(self, prompts, sampling):
+            return [
+                {
+                    "text": "batch output",
+                    "prompt_tokens": 5,
+                    "completion_tokens": 10,
+                    "total_tokens": 15,
+                    "time_to_first_token_ms": 10.0,
+                    "total_time_ms": 50.0,
+                    "tokens_per_second": 200.0,
+                }
+                for _ in prompts
+            ]
+
+    monkeypatch.setattr(
+        "lapis.dev.cli.LapisRuntime.from_checkpoint",
+        lambda checkpoint, device, quantize=False, dtype="float32": MockRuntime(),
+    )
+
+    baseline_path = tmp_path / "baseline.json"
+    result = runner.invoke(
+        app,
+        [
+            "dev",
+            "benchmark",
+            "--batch-size",
+            "2",
+            "--runs",
+            "2",
+            "--warmup",
+            "1",
+            "--save-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Batch Size" in result.stdout
+    assert baseline_path.exists()
+
+    result_compare = runner.invoke(
+        app,
+        [
+            "dev",
+            "benchmark",
+            "--batch-size",
+            "2",
+            "--runs",
+            "2",
+            "--warmup",
+            "1",
+            "--compare-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert result_compare.exit_code == 0
+    assert "Baseline comparison" in result_compare.stdout
