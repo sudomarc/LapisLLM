@@ -16,6 +16,9 @@ All notable changes to LapisLLM are documented here.
 
 ### Added
 
+- Added `validate_prompt_length` and `truncate_prompt: bool` options to `LapisRuntime` to validate token length against `max_position_embeddings` and raise `ContextLengthExceededError` when truncation is disallowed.
+- Added `generate_batch` and `generate_batch_with_metadata` to `LapisRuntime` for batched text generation and aggregate throughput tracking.
+- Added `--batch-size`, `--save-baseline`, `--compare-baseline`, and `--max-regression-pct` options to `lapis dev benchmark` for automated inference performance regression testing.
 - Added regression coverage for the non-interactive Colab contract, corpus budgeting, stale-cache invalidation, smoke-test budget, and checkpoint artifact separation.
 - Added a repository documentation gate requiring relevant documentation and applicable agent skills to be read before every repository change.
 

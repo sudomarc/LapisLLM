@@ -220,7 +220,8 @@ lapis dev train
 lapis dev evaluate --checkpoint checkpoints/latest.pt
 lapis dev generate "A language model learns by" --seed 42
 lapis dev inspect --checkpoint checkpoints/latest.pt
-lapis dev benchmark --checkpoint checkpoints/latest.pt --runs 5 --warmup 1 --quantize
+lapis dev benchmark --checkpoint checkpoints/latest.pt --runs 5 --warmup 1 --batch-size 4 --save-baseline baseline.json
+lapis dev benchmark --checkpoint checkpoints/latest.pt --compare-baseline baseline.json --max-regression-pct 10.0
 lapis dev checkpoint inspect --checkpoint checkpoints/latest.pt
 ```
 
@@ -236,7 +237,10 @@ from lapis.inference import LapisRuntime, SamplingConfig
 # Load with optional dynamic INT8 CPU quantization
 runtime = LapisRuntime.from_checkpoint("checkpoints/latest.pt", quantize=False)
 
-# Generate text with deterministic seed sampling
+# Validate prompt token length against context limit
+prompt_len = runtime.validate_prompt_length("Explain DNS.")
+
+# Generate text with deterministic seed sampling and optional truncation control
 response = runtime.generate(
     "Explain DNS.",
     sampling=SamplingConfig(
@@ -246,6 +250,13 @@ response = runtime.generate(
         top_p=0.95,
         seed=42,
     ),
+    truncate_prompt=True,
+)
+
+# Batched generation
+batch_responses = runtime.generate_batch(
+    ["Explain DNS.", "Explain BGP."],
+    sampling=SamplingConfig(max_new_tokens=64),
 )
 
 # Or generate with structured usage & performance metadata
@@ -561,11 +572,11 @@ The complete model/runtime roadmap is maintained in [docs/roadmap.md](docs/roadm
 - [x] Quantized inference & dynamic INT8 support
 - [x] Deterministic generation controls & seed support
 - [x] p50/p95 latency tracking & throughput benchmarks
+- [x] Performance regression tracking & baseline comparisons
 - [ ] Mixed-precision optimization
 - [ ] Distributed / multi-GPU training
 - [ ] Larger model configurations
 - [ ] Broader benchmark suite
-- [ ] Performance regression tracking
 - [ ] Production serving hardening
 
 ### Post-training and export

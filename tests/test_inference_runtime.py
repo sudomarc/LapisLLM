@@ -225,3 +225,46 @@ def test_stream_generate_buffers_unstable_decoding(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 4]))
     runtime.tokenizer.decode = lambda ids, skip_special_tokens=True: decoded[tuple(ids)]
     assert "".join(runtime.stream_generate("hello", SamplingConfig(max_new_tokens=2))) == "é"
+
+
+def test_validate_prompt_length() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    # LongPromptTokenizer produces 20 tokens for any prompt, FakeModel limit is 16
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.validate_prompt_length("any prompt")
+
+    normal_runtime = make_runtime(FakeTokenizer())
+    # FakeTokenizer produces 1 token for non-empty string
+    count = normal_runtime.validate_prompt_length("hello")
+    assert count == 1
+
+
+def test_truncate_prompt_false_raises_context_length_exceeded() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.generate("test prompt", truncate_prompt=False)
+
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.generate_with_metadata("test prompt", truncate_prompt=False)
+
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.generate_batch(["test prompt"], truncate_prompt=False)
+
+
+def test_generate_batch_consistency(monkeypatch) -> None:
+    runtime = make_runtime()
+    monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config: iter([3, 3]))
+
+    results = runtime.generate_batch(["p1", "p2"], SamplingConfig(max_new_tokens=2))
+    assert len(results) == 2
+    assert results[0] == "xxx"
+    assert results[1] == "xxx"
+
+    batch_meta = runtime.generate_batch_with_metadata(["p1", "p2"], SamplingConfig(max_new_tokens=2))
+    assert batch_meta["batch_size"] == 2
+    assert batch_meta["total_prompt_tokens"] == 2
+    assert batch_meta["total_completion_tokens"] == 4
+    assert batch_meta["total_tokens"] == 6
+    assert "tokens_per_second" in batch_meta
+    assert len(batch_meta["results"]) == 2
+    assert batch_meta["results"][0]["text"] == "xxx"

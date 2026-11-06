@@ -140,13 +140,24 @@ def benchmark(
     seed: int | None = typer.Option(None, "--seed"),
     quantize: bool = typer.Option(False, "--quantize"),
     dtype: str = typer.Option("float32", "--dtype"),
+    batch_size: int = typer.Option(1, "--batch-size", min=1),
+    save_baseline: Path | None = typer.Option(None, "--save-baseline"),
+    compare_baseline: Path | None = typer.Option(None, "--compare-baseline"),
+    max_regression_pct: float | None = typer.Option(None, "--max-regression-pct", min=0.0),
 ) -> None:
     """Measure inference latency and throughput without changing the checkpoint."""
+    import json
+
     runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize, dtype=dtype)
     sampling = SamplingConfig(max_new_tokens=tokens, seed=seed)
 
+    prompts = [prompt] * batch_size
+
     for _ in range(warmup):
-        runtime.generate(prompt, sampling)
+        if batch_size > 1:
+            runtime.generate_batch(prompts, sampling)
+        else:
+            runtime.generate(prompt, sampling)
 
     latencies_ms: list[float] = []
     ttfts_ms: list[float] = []
@@ -154,11 +165,20 @@ def benchmark(
     sample_text = ""
 
     for _ in range(runs):
-        meta = runtime.generate_with_metadata(prompt, sampling)
-        sample_text = meta["text"]
-        latencies_ms.append(meta["total_time_ms"])
-        ttfts_ms.append(meta["time_to_first_token_ms"])
-        rates.append(meta["tokens_per_second"])
+        if batch_size > 1:
+            batch_meta = runtime.generate_batch_with_metadata(prompts, sampling)
+            sample_text = batch_meta["results"][0]["text"]
+            latencies_ms.append(batch_meta["total_time_ms"])
+            rates.append(batch_meta["tokens_per_second"])
+            # average TTFT across the batch
+            batch_ttfts = [r["time_to_first_token_ms"] for r in batch_meta["results"]]
+            ttfts_ms.append(sum(batch_ttfts) / len(batch_ttfts))
+        else:
+            meta = runtime.generate_with_metadata(prompt, sampling)
+            sample_text = meta["text"]
+            latencies_ms.append(meta["total_time_ms"])
+            ttfts_ms.append(meta["time_to_first_token_ms"])
+            rates.append(meta["tokens_per_second"])
 
     latencies_ms.sort()
     ttfts_ms.sort()
@@ -184,13 +204,14 @@ def benchmark(
         except ImportError:
             pass
 
-    table = Table(title=f"Inference Benchmark ({runs} runs, warmup={warmup})")
+    table = Table(title=f"Inference Benchmark ({runs} runs, warmup={warmup}, batch_size={batch_size})")
     table.add_column("Metric")
     table.add_column("Value")
     table.add_row("Device", str(runtime.device))
     table.add_row("Dtype", str(runtime.dtype).replace("torch.", ""))
     table.add_row("Quantized", str(runtime.quantized))
-    table.add_row("Generated Tokens / run", str(tokens))
+    table.add_row("Batch Size", str(batch_size))
+    table.add_row("Generated Tokens / item", str(tokens))
     table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")
     table.add_row("Avg TTFT (ms)", f"{avg_ttft:.2f}")
     table.add_row("p50 Latency (ms)", f"{p50_latency:.2f}")
@@ -200,6 +221,69 @@ def benchmark(
 
     console.print(table)
     console.print(f"[dim]Sample Output:[/dim] {sample_text}")
+
+    current_metrics = {
+        "device": str(runtime.device),
+        "dtype": str(runtime.dtype).replace("torch.", ""),
+        "quantized": bool(runtime.quantized),
+        "batch_size": batch_size,
+        "tokens_per_item": tokens,
+        "avg_throughput_tokens_per_s": round(avg_rate, 2),
+        "avg_ttft_ms": round(avg_ttft, 2),
+        "p50_latency_ms": round(p50_latency, 2),
+        "p95_latency_ms": round(p95_latency, 2),
+    }
+
+    if save_baseline:
+        save_baseline.parent.mkdir(parents=True, exist_ok=True)
+        with open(save_baseline, "w", encoding="utf-8") as f:
+            json.dump(current_metrics, f, indent=2)
+        console.print(f"[green]Saved benchmark baseline to {save_baseline}[/green]")
+
+    if compare_baseline:
+        if not compare_baseline.is_file():
+            raise typer.BadParameter(f"Baseline file not found: {compare_baseline}")
+        with open(compare_baseline, "r", encoding="utf-8") as f:
+            baseline_data = json.load(f)
+
+        cmp_table = Table(title=f"Baseline Comparison: {compare_baseline}")
+        cmp_table.add_column("Metric")
+        cmp_table.add_column("Baseline")
+        cmp_table.add_column("Current")
+        cmp_table.add_column("Delta (%)")
+
+        regressions: list[str] = []
+
+        # Compare p50 latency (higher is worse)
+        base_p50 = baseline_data.get("p50_latency_ms", 0.0)
+        p50_delta_pct = ((p50_latency - base_p50) / base_p50 * 100.0) if base_p50 > 0 else 0.0
+        p50_delta_str = f"{p50_delta_pct:+.1f}%"
+        cmp_table.add_row("p50 Latency (ms)", f"{base_p50:.2f}", f"{p50_latency:.2f}", p50_delta_str)
+
+        # Compare throughput (lower is worse)
+        base_tps = baseline_data.get("avg_throughput_tokens_per_s", 0.0)
+        tps_delta_pct = ((avg_rate - base_tps) / base_tps * 100.0) if base_tps > 0 else 0.0
+        tps_delta_str = f"{tps_delta_pct:+.1f}%"
+        cmp_table.add_row("Avg Throughput (tok/s)", f"{base_tps:.2f}", f"{avg_rate:.2f}", tps_delta_str)
+
+        console.print(cmp_table)
+
+        if max_regression_pct is not None:
+            # Latency regression: p50 latency increased by more than max_regression_pct
+            if p50_delta_pct > max_regression_pct:
+                regressions.append(
+                    f"p50 latency regressed by {p50_delta_pct:.1f}% (threshold: {max_regression_pct:.1f}%)"
+                )
+            # Throughput regression: avg_rate decreased by more than max_regression_pct
+            if tps_delta_pct < -max_regression_pct:
+                regressions.append(
+                    f"Throughput regressed by {abs(tps_delta_pct):.1f}% (threshold: {max_regression_pct:.1f}%)"
+                )
+
+            if regressions:
+                for reg in regressions:
+                    console.print(f"[bold red]REGRESSION ERROR: {reg}[/bold red]")
+                raise typer.Exit(code=1)
 
 
 @app.command("publish")
