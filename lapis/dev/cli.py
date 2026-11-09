@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -140,6 +141,9 @@ def benchmark(
     seed: int | None = typer.Option(None, "--seed"),
     quantize: bool = typer.Option(False, "--quantize"),
     dtype: str = typer.Option("float32", "--dtype"),
+    save_baseline: Path | None = typer.Option(None, "--save-baseline"),
+    compare_baseline: Path | None = typer.Option(None, "--compare-baseline"),
+    max_regression_pct: float | None = typer.Option(None, "--max-regression-pct", min=0.0),
 ) -> None:
     """Measure inference latency and throughput without changing the checkpoint."""
     runtime = LapisRuntime.from_checkpoint(checkpoint, device, quantize=quantize, dtype=dtype)
@@ -149,7 +153,9 @@ def benchmark(
         runtime.generate(prompt, sampling)
 
     latencies_ms: list[float] = []
+    prefill_ms: list[float] = []
     ttfts_ms: list[float] = []
+    tpots_ms: list[float] = []
     rates: list[float] = []
     sample_text = ""
 
@@ -157,7 +163,9 @@ def benchmark(
         meta = runtime.generate_with_metadata(prompt, sampling)
         sample_text = meta["text"]
         latencies_ms.append(meta["total_time_ms"])
+        prefill_ms.append(meta.get("prefill_time_ms", meta["time_to_first_token_ms"]))
         ttfts_ms.append(meta["time_to_first_token_ms"])
+        tpots_ms.append(meta.get("time_per_output_token_ms", 0.0))
         rates.append(meta["tokens_per_second"])
 
     latencies_ms.sort()
@@ -168,7 +176,9 @@ def benchmark(
     p95_index = min(int(len(latencies_ms) * 0.95), len(latencies_ms) - 1)
     p95_latency = latencies_ms[p95_index]
     avg_rate = sum(rates) / len(rates)
+    avg_prefill = sum(prefill_ms) / len(prefill_ms)
     avg_ttft = sum(ttfts_ms) / len(ttfts_ms)
+    avg_tpot = sum(tpots_ms) / len(tpots_ms)
 
     memory_info = ""
     if torch.cuda.is_available() and "cuda" in str(runtime.device):
@@ -184,6 +194,25 @@ def benchmark(
         except ImportError:
             pass
 
+    current_metrics = {
+        "device": str(runtime.device),
+        "dtype": str(runtime.dtype).replace("torch.", ""),
+        "quantized": runtime.quantized,
+        "tokens": tokens,
+        "runs": runs,
+        "avg_throughput_tok_s": round(avg_rate, 2),
+        "avg_prefill_ms": round(avg_prefill, 2),
+        "avg_ttft_ms": round(avg_ttft, 2),
+        "avg_tpot_ms": round(avg_tpot, 2),
+        "p50_latency_ms": round(p50_latency, 2),
+        "p95_latency_ms": round(p95_latency, 2),
+    }
+
+    if save_baseline is not None:
+        save_baseline.parent.mkdir(parents=True, exist_ok=True)
+        save_baseline.write_text(json.dumps(current_metrics, indent=2), encoding="utf-8")
+        console.print(f"[green]Saved baseline benchmark to {save_baseline}[/green]")
+
     table = Table(title=f"Inference Benchmark ({runs} runs, warmup={warmup})")
     table.add_column("Metric")
     table.add_column("Value")
@@ -192,7 +221,9 @@ def benchmark(
     table.add_row("Quantized", str(runtime.quantized))
     table.add_row("Generated Tokens / run", str(tokens))
     table.add_row("Avg Throughput (tok/s)", f"{avg_rate:.2f}")
+    table.add_row("Avg Prefill (ms)", f"{avg_prefill:.2f}")
     table.add_row("Avg TTFT (ms)", f"{avg_ttft:.2f}")
+    table.add_row("Avg TPOT (ms)", f"{avg_tpot:.2f}")
     table.add_row("p50 Latency (ms)", f"{p50_latency:.2f}")
     table.add_row("p95 Latency (ms)", f"{p95_latency:.2f}")
     if memory_info:
@@ -200,6 +231,61 @@ def benchmark(
 
     console.print(table)
     console.print(f"[dim]Sample Output:[/dim] {sample_text}")
+
+    if compare_baseline is not None:
+        if not compare_baseline.is_file():
+            raise typer.BadParameter(f"Baseline file not found: {compare_baseline}")
+        try:
+            baseline_data = json.loads(compare_baseline.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise typer.BadParameter(f"Failed to read baseline JSON: {exc}") from exc
+
+        comp_table = Table(title=f"Baseline Comparison ({compare_baseline.name})")
+        comp_table.add_column("Metric")
+        comp_table.add_column("Baseline")
+        comp_table.add_column("Current")
+        comp_table.add_column("Delta (%)")
+
+        regressions: list[str] = []
+
+        # Check throughput (higher is better)
+        base_rate = baseline_data.get("avg_throughput_tok_s", 0.0)
+        curr_rate = current_metrics["avg_throughput_tok_s"]
+        if base_rate > 0:
+            rate_delta_pct = ((curr_rate - base_rate) / base_rate) * 100
+            comp_table.add_row(
+                "Avg Throughput (tok/s)",
+                f"{base_rate:.2f}",
+                f"{curr_rate:.2f}",
+                f"{rate_delta_pct:+.1f}%",
+            )
+            if max_regression_pct is not None and rate_delta_pct < -max_regression_pct:
+                regressions.append(
+                    f"Throughput degraded by {-rate_delta_pct:.1f}% (threshold: {max_regression_pct:.1f}%)"
+                )
+
+        # Check p50 latency (lower is better)
+        base_p50 = baseline_data.get("p50_latency_ms", 0.0)
+        curr_p50 = current_metrics["p50_latency_ms"]
+        if base_p50 > 0:
+            p50_delta_pct = ((curr_p50 - base_p50) / base_p50) * 100
+            comp_table.add_row(
+                "p50 Latency (ms)",
+                f"{base_p50:.2f}",
+                f"{curr_p50:.2f}",
+                f"{p50_delta_pct:+.1f}%",
+            )
+            if max_regression_pct is not None and p50_delta_pct > max_regression_pct:
+                regressions.append(
+                    f"p50 Latency increased by {p50_delta_pct:.1f}% (threshold: {max_regression_pct:.1f}%)"
+                )
+
+        console.print(comp_table)
+
+        if regressions:
+            for reg in regressions:
+                console.print(f"[bold red]REGRESSION:[/bold red] {reg}")
+            raise typer.Exit(code=1)
 
 
 @app.command("publish")

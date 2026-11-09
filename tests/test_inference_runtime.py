@@ -207,6 +207,41 @@ def test_prepare_ids_truncates_long_prompts_to_context_limit() -> None:
     assert ids.tolist()[0] == list(range(4, 20))
 
 
+def test_validate_prompt_length_raises_context_length_exceeded() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.validate_prompt_length("long prompt", truncate=False)
+
+    # When truncate=True, it returns truncated list
+    truncated = runtime.validate_prompt_length("long prompt", truncate=True)
+    assert len(truncated) == 16
+    assert truncated == list(range(4, 20))
+
+
+def test_generate_with_truncate_prompt_false_raises() -> None:
+    runtime = make_runtime(LongPromptTokenizer())
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.generate("long prompt", truncate_prompt=False)
+
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        runtime.generate_with_metadata("long prompt", truncate_prompt=False)
+
+    with pytest.raises(ContextLengthExceededError, match="exceeds context limit"):
+        list(runtime.stream_generate("long prompt", truncate_prompt=False))
+
+
+def test_generate_with_metadata_detailed_timings(monkeypatch) -> None:
+    runtime = make_runtime()
+    monkeypatch.setattr(runtime, "_iter_generated_token_ids", lambda prompt, config, **kw: iter([3, 3, 3]))
+    meta = runtime.generate_with_metadata("hello", SamplingConfig(max_new_tokens=3))
+    assert "prefill_time_ms" in meta
+    assert "time_to_first_token_ms" in meta
+    assert "time_per_output_token_ms" in meta
+    assert meta["prefill_time_ms"] >= 0
+    assert meta["time_to_first_token_ms"] >= 0
+    assert meta["time_per_output_token_ms"] >= 0
+
+
 def test_sampling_rejects_non_finite_logits() -> None:
     logits = torch.tensor([[0.0, float("nan"), 1.0]])
     with pytest.raises(NonFiniteLogitsError, match="non-finite logits"):

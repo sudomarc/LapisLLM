@@ -82,5 +82,92 @@ def test_dev_benchmark_command(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Inference Benchmark" in result.stdout
     assert "Avg Throughput" in result.stdout
+    assert "Avg Prefill" in result.stdout
+    assert "Avg TPOT" in result.stdout
     assert "p50 Latency" in result.stdout
     assert "p95 Latency" in result.stdout
+
+
+def test_dev_benchmark_save_and_compare_baseline(tmp_path, monkeypatch) -> None:
+    class MockRuntime:
+        device = "cpu"
+        dtype = "float32"
+        quantized = False
+
+        def generate(self, prompt, sampling):
+            return "output"
+
+        def generate_with_metadata(self, prompt, sampling):
+            return {
+                "text": "benchmark text",
+                "prompt_tokens": 5,
+                "completion_tokens": 10,
+                "total_tokens": 15,
+                "prefill_time_ms": 10.0,
+                "time_to_first_token_ms": 12.0,
+                "time_per_output_token_ms": 4.0,
+                "total_time_ms": 50.0,
+                "tokens_per_second": 200.0,
+            }
+
+    monkeypatch.setattr(
+        "lapis.dev.cli.LapisRuntime.from_checkpoint",
+        lambda checkpoint, device, quantize=False, dtype="float32": MockRuntime(),
+    )
+
+    baseline_file = tmp_path / "baseline.json"
+    result = runner.invoke(
+        app,
+        ["dev", "benchmark", "--runs", "2", "--warmup", "0", "--save-baseline", str(baseline_file)],
+    )
+    assert result.exit_code == 0
+    assert baseline_file.is_file()
+
+    # Compare against identical baseline without regression
+    result_compare = runner.invoke(
+        app,
+        [
+            "dev",
+            "benchmark",
+            "--runs",
+            "2",
+            "--warmup",
+            "0",
+            "--compare-baseline",
+            str(baseline_file),
+            "--max-regression-pct",
+            "10.0",
+        ],
+    )
+    assert result_compare.exit_code == 0
+    assert "Baseline Comparison" in result_compare.stdout
+
+    # Now make baseline have higher throughput and lower latency, triggering failure
+    import json
+
+    baseline_file.write_text(
+        json.dumps(
+            {
+                "avg_throughput_tok_s": 500.0,
+                "p50_latency_ms": 10.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result_fail = runner.invoke(
+        app,
+        [
+            "dev",
+            "benchmark",
+            "--runs",
+            "2",
+            "--warmup",
+            "0",
+            "--compare-baseline",
+            str(baseline_file),
+            "--max-regression-pct",
+            "5.0",
+        ],
+    )
+    assert result_fail.exit_code == 1
+    assert "REGRESSION:" in result_fail.stdout

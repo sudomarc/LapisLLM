@@ -16,6 +16,9 @@ All notable changes to LapisLLM are documented here.
 
 ### Added
 
+- Added explicit long-context prompt validation (`validate_prompt_length` and `truncate_prompt`) in `LapisRuntime`, raising `ContextLengthExceededError` when prompt length exceeds context window limits.
+- Added detailed inference timing metrics (`prefill_time_ms`, `time_to_first_token_ms`, `time_per_output_token_ms`) in `LapisRuntime.generate_with_metadata` and `lapis dev benchmark`.
+- Added baseline regression tracking in `lapis dev benchmark` via `--save-baseline`, `--compare-baseline`, and `--max-regression-pct`.
 - Added regression coverage for the non-interactive Colab contract, corpus budgeting, stale-cache invalidation, smoke-test budget, and checkpoint artifact separation.
 - Added a repository documentation gate requiring relevant documentation and applicable agent skills to be read before every repository change.
 
