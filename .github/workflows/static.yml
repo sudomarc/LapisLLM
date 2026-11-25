@@ -1,7 +1,6 @@
 name: Lapis website
 
 on:
-  push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
