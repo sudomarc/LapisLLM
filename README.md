@@ -39,6 +39,7 @@ The exact model size, batch size, sequence length, precision and expected traini
 - [Architecture](docs/architecture.md)
 - [Proposed model specification](docs/model-spec.md)
 - [Local PC training guide](docs/training/local.md)
+- [Implementation plan and issue dependencies](docs/implementation-plan.md)
 - [Checkpoint and reproducibility contract](docs/training/reproducibility.md)
 - [Dataset governance](docs/data-policy.md)
 - [Evaluation policy](docs/evaluation.md)

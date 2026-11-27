@@ -6,6 +6,7 @@
 - [Architecture](architecture.md)
 - [Model specification](model-spec.md)
 - [Roadmap](roadmap.md)
+- [Implementation plan and issue dependencies](implementation-plan.md)
 - [Glossary](glossary.md)
 
 ## Engineering contracts
