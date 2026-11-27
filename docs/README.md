@@ -10,7 +10,7 @@
 
 ## Engineering contracts
 
-- [Colab training](training/colab.md)
+- [Local PC training](training/local.md)
 - [Reproducibility and checkpoints](training/reproducibility.md)
 - [Dataset governance](data-policy.md)
 - [Evaluation methodology](evaluation.md)

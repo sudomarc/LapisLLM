@@ -22,32 +22,23 @@ Train a coding-focused base model from random initialization using causal next-t
 | Embeddings | Tied token embedding and LM head for Micro baseline |
 | Framework | PyTorch |
 
-Use conventional, inspectable components for the first baseline. Do not add custom kernels, mixture-of-experts, speculative decoding or distributed complexity before correctness and baseline throughput are measured.
+Use conventional, inspectable components for the first baseline. Do not add custom kernels, mixture-of-experts, speculative decoding or distributed complexity before correctness and local throughput are measured.
 
 ## Model profiles
 
 | Profile | Target parameters | Purpose |
 |---|---:|---|
 | Micro | 5–10M | Prove end-to-end correctness and first learning experiment |
-| Small | 30–50M | First scale-up if compute and data justify it |
+| Small | 30–50M | First scale-up if local compute and data justify it |
 | Medium | 100–300M | Future research target, not a commitment |
 
-A parameter target is not a performance promise. Compute the actual parameter count from the instantiated model and save it in the run manifest.
+These targets are provisional. The actual PC specifications are not yet recorded. Do not freeze hidden size, layers, batch size, sequence length or precision until hardware discovery and memory/throughput tests are complete. A parameter target is not a performance promise.
 
 ## Micro configuration proposal
 
-- Vocabulary: 16,000.
-- Hidden size: 256.
-- Transformer layers: 4.
-- Attention heads: 4; head dimension 64.
-- MLP intermediate size: approximately 704.
-- Maximum sequence length: 512.
-- RoPE base: 10,000.
-- Pre-norm RMSNorm and SwiGLU.
-- Tied input and output token embeddings.
-- Bias disabled unless controlled tests show a benefit.
+A candidate starting point is vocabulary 16k, hidden size 256, 4 layers, 4 heads, head dimension 64, sequence length 512, RoPE base 10,000, pre-norm RMSNorm and SwiGLU, with tied input/output embeddings.
 
-The implementation must calculate the actual parameter count. If the profile falls outside 5–10M, revise it and record why.
+This is a configuration hypothesis, not a guarantee that the machine can train it efficiently. The implementation must calculate actual parameter count and benchmark memory/throughput. Reduce the profile when the measured host budget requires it.
 
 ## Tokenizer contract
 
@@ -58,11 +49,11 @@ A checkpoint must declare the exact tokenizer identity it expects. Never silentl
 ## Precision and hardware
 
 - FP32 is the reference path for correctness tests.
-- Use BF16 only when the detected accelerator supports it reliably.
-- Use FP16 with gradient scaling when appropriate.
-- CPU remains supported for tiny tests and smoke runs.
-- Never assume a fixed Colab GPU model.
+- BF16 is used only when the detected device supports it reliably.
+- FP16 uses gradient scaling where appropriate.
+- CPU remains supported for tiny tests and bounded experiments.
+- Accelerator selection is based on actual PyTorch backend availability and tested compatibility, never on a hardcoded device assumption.
 
 ## Architecture change gate
 
-Any change to architecture or tokenizer requires shape and parameter-count tests, a fixed evaluation sample, measured memory and tokens/second, comparison with the prior baseline, and an ADR when it affects a public model contract.
+Any change to architecture or tokenizer requires shape and parameter-count tests, a fixed evaluation sample, measured peak memory and tokens/second, comparison with the prior baseline, and an ADR when it affects a public model contract.

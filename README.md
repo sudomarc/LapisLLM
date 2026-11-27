@@ -11,9 +11,10 @@ LapisLLM aims to own the complete model lifecycle: tokenizer, decoder-only Trans
 - Strategy: train the base model from scratch.
 - Primary ambition: coding and software-development assistance.
 - Identity: independent LapisLLM architecture, training lineage and weights.
-- Compute: limited; begin with a small Micro model and measure before scaling.
-- Training environment: Google Colab for experimental GPU runs.
-- Automation: GitHub Actions for CI and bounded CPU checks, not long-running GPU pre-training.
+- Compute: the maintainer's own PC; no hosted training runtime is part of the plan.
+- Initial scale: a small Micro model for validating the full pipeline; scale only after measuring local hardware.
+- Development: Python and PyTorch.
+- CI: GitHub Actions for deterministic CPU tests only.
 
 LapisLLM is an experimental engineering project. It does not claim parity with Claude, GPT or Gemini. Any capability claim must be supported by reproducible evaluation.
 
@@ -25,17 +26,19 @@ LapisLLM is an experimental engineering project. It does not claim parity with C
 | Model | Decoder-only causal Transformer |
 | Tokenizer | Code-oriented, byte-aware BPE |
 | Objective | Causal next-token prediction |
-| First profile | Micro, target 5–10M parameters |
-| Compute | Colab, with CPU fallback for tests |
-| Artifact storage | Durable storage outside Git; Drive supported for manual notebooks |
-| CI | GitHub Actions |
+| First profile | Micro, initially targeting 5–10M parameters |
+| Training | Local PC, with hardware-aware CPU/accelerator selection |
+| Artifacts | Local datasets, run manifests and checkpoints outside Git |
+| CI | GitHub Actions, CPU-only |
+
+The exact model size, batch size, sequence length, precision and expected training time must be calibrated against the actual PC. Do not assume a particular GPU or VRAM capacity.
 
 ## Documentation
 
 - [Project status](docs/status.md)
 - [Architecture](docs/architecture.md)
 - [Proposed model specification](docs/model-spec.md)
-- [Colab training guide](docs/training/colab.md)
+- [Local PC training guide](docs/training/local.md)
 - [Checkpoint and reproducibility contract](docs/training/reproducibility.md)
 - [Dataset governance](docs/data-policy.md)
 - [Evaluation policy](docs/evaluation.md)

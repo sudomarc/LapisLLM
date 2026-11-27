@@ -1,114 +1,148 @@
 # LapisLLM roadmap
 
-This roadmap is evidence-gated, not calendar-based. Reprioritize when hardware availability, data quality or evaluation makes a stage infeasible.
+This roadmap is evidence-gated, not calendar-based. Progress depends on the actual PC hardware, data rights, measured throughput and evaluation results.
 
-## Phase 0 — Governance and foundation
+## Step 0 — Governance and project scope
+
 - [x] Record the from-scratch coding-model direction.
-- [x] Establish repository and agent instructions.
-- [x] Document proposed architecture and Micro profile.
-- [x] Define Colab, data, checkpoint, evaluation and security policies.
-- [ ] Decide an explicit model-weight license.
-- [ ] Confirm initial data/legal review and implementation issues.
+- [x] Decide that training runs on the maintainer's own PC.
+- [x] Establish agent and contribution instructions.
+- [x] Document proposed architecture, data policy and evaluation policy.
+- [ ] Decide model-weight license before public weight distribution.
+- [ ] Audit the target PC and storage capacity.
 
-**Exit gate:** reviewed project contract and testable initial configuration.
+**Exit gate:** documented project contract and a measured hardware report.
 
-## Phase 1 — Package and CI
+## Step 1 — Python package and CI foundation
+
 - [ ] Create minimal Python package and typed configuration.
-- [ ] Pin supported Python/PyTorch versions.
-- [ ] Add lint, unit tests, package build and docs checks.
-- [ ] Add CPU-only CI and bounded Micro smoke test.
-- [ ] Exclude generated artifacts and secrets.
+- [ ] Pin supported Python and PyTorch versions.
+- [ ] Add lint, unit tests and package-build checks.
+- [ ] Add CPU-only GitHub Actions CI.
+- [ ] Add documentation/config validation.
+- [ ] Exclude datasets, runs, checkpoints, credentials and local environments from Git.
 
 **Exit gate:** clean install and deterministic CPU tests on a fresh runner.
 
-## Phase 2 — Data and tokenizer
-- [ ] Add dataset registry and source approval state.
-- [ ] Implement normalized records and provenance manifests.
-- [ ] Add license, secret and privacy checks.
-- [ ] Implement cleaning, filtering and deduplication.
-- [ ] Validate train/validation/test isolation.
-- [ ] Train a byte-aware code BPE tokenizer.
-- [ ] Save/load tokenizer with compatibility metadata.
+## Step 2 — Local hardware discovery and runtime
 
-**Exit gate:** reproducible preparation of a small reviewed corpus without raw corpus data in Git.
+- [ ] Implement hardware diagnostics for OS, CPU, RAM, accelerator, VRAM, drivers and free disk.
+- [ ] Detect supported PyTorch device backends.
+- [ ] Add explicit device and precision configuration.
+- [ ] Fail clearly when a requested accelerator is unavailable.
+- [ ] Add a bounded model throughput and peak-memory benchmark.
+- [ ] Record an approved local Micro profile based on measured hardware.
 
-## Phase 3 — Lapis Micro model
-- [ ] Implement decoder-only Transformer.
+**Exit gate:** a reproducible hardware report and a validated training configuration for the maintainer's PC.
+
+## Step 3 — Dataset registry and corpus preparation
+
+- [ ] Define dataset-source schema and approval states.
+- [ ] Record canonical source, immutable revision, license, intended use and attribution.
+- [ ] Implement download/ingestion with bounded retries.
+- [ ] Implement normalization, secret filtering, quality filters and deduplication.
+- [ ] Validate train/validation/test separation and leakage.
+- [ ] Store raw and processed corpus outside Git.
+- [ ] Build a small local development corpus and manifests.
+
+**Exit gate:** reproducible, legally reviewed local corpus with provenance.
+
+## Step 4 — Tokenizer
+
+- [ ] Train code-oriented, byte-aware BPE on the training split only.
+- [ ] Save tokenizer and metadata.
+- [ ] Implement encode/decode and save/load tests.
+- [ ] Evaluate tokens-per-file and language coverage.
+- [ ] Bind tokenizer identity to model configs and checkpoints.
+
+**Exit gate:** deterministic tokenizer artifact compatible with the model vocabulary.
+
+## Step 5 — Lapis Micro architecture
+
+- [ ] Implement decoder-only Transformer from random initialization.
 - [ ] Implement causal attention, RoPE, RMSNorm and SwiGLU.
-- [ ] Add config validation and parameter counting.
-- [ ] Add forward, causality, gradient and numerical tests.
-- [ ] Confirm actual Micro parameter count.
+- [ ] Add parameter counting and config validation.
+- [ ] Add shape, causality, gradient and numerical tests.
+- [ ] Verify parameter count against the selected local Micro profile.
 
-**Exit gate:** CPU tests pass and a tiny next-token batch produces finite loss and gradients.
+**Exit gate:** correct CPU forward/backward pass and finite loss on a tiny synthetic batch.
 
-## Phase 4 — Training and recovery
-- [ ] Implement next-token training loop and AdamW.
-- [ ] Add warmup/cosine schedule, accumulation and clipping.
-- [ ] Add hardware-aware precision selection.
-- [ ] Add progress metrics.
-- [ ] Implement resumable checkpoint state.
-- [ ] Test interruption, restore and incompatibility failures.
+## Step 6 — Training engine
 
-**Exit gate:** a bounded run resumes from the last complete checkpoint with a complete manifest.
+- [ ] Implement next-token prediction and loss.
+- [ ] Add AdamW, warmup/cosine schedule, accumulation and clipping.
+- [ ] Add device-aware FP32/BF16/FP16 behavior.
+- [ ] Add progress metrics: loss, tokens, steps, step time and throughput.
+- [ ] Add bounded validation and early smoke-run support.
 
-## Phase 5 — Colab
-- [ ] Implement thin notebook entry point.
-- [ ] Add hardware preflight and VRAM detection.
-- [ ] Add explicit config and run IDs.
-- [ ] Implement durable artifact-store adapter.
-- [ ] Add Drive persistence for hosted notebooks.
-- [ ] Test forced termination and recovery.
-- [ ] Record actual hardware, throughput and cost observations.
+**Exit gate:** tiny local run learns a small corpus without non-finite values.
 
-**Exit gate:** a Micro experiment completes across one or more Colab sessions with verified recovery.
+## Step 7 — Checkpointing and recovery
 
-## Phase 6 — Coding evaluation
+- [ ] Save model, optimizer, scheduler, scaler and RNG states.
+- [ ] Persist data position and experiment manifest.
+- [ ] Implement safe local writes and checksum verification.
+- [ ] Implement resume compatibility validation.
+- [ ] Test Ctrl+C, forced process termination and restart.
+- [ ] Retain previous known-good checkpoints.
+
+**Exit gate:** a training run can be stopped and resumed without silently restarting or corrupting state.
+
+## Step 8 — Local training workflow
+
+- [ ] Implement local train command and config-driven run IDs.
+- [ ] Implement local data/output roots and free-space checks.
+- [ ] Add preflight before expensive work.
+- [ ] Add graceful stop and useful console progress.
+- [ ] Ensure logs and artifacts remain outside Git.
+- [ ] Document the exact local commands for Windows and Linux.
+
+**Exit gate:** the maintainer can launch, observe, stop and resume Micro training entirely on the PC.
+
+## Step 9 — Evaluation baseline
+
 - [ ] Implement validation loss/perplexity.
 - [ ] Build versioned internal coding tasks.
-- [ ] Add compile/test scoring in an isolated sandbox.
-- [ ] Add sample review and failure taxonomy.
-- [ ] Publish reproducible experiment reports.
+- [ ] Add compile/test-based scoring in an isolated sandbox.
+- [ ] Record model/tokenizer/data/config hashes.
+- [ ] Publish baseline metrics and failure analysis.
 
-**Exit gate:** Micro has a measured baseline and documented failures.
+**Exit gate:** Micro has measured, reproducible quality and performance baselines.
 
-## Phase 7 — Lapis Small
-- [ ] Profile memory and tokens per second on actual hardware.
-- [ ] Estimate token, step and accelerator budgets.
-- [ ] Expand only the reviewed data mixture.
-- [ ] Train the 30–50M profile if the measured budget is viable.
-- [ ] Compare Micro and Small on the same evaluation harness.
+## Step 10 — First end-to-end Micro experiment
 
-**Exit gate:** scale-up yields measured benefit at an understood compute cost.
+- [ ] Use the reviewed local corpus.
+- [ ] Initialize model weights randomly.
+- [ ] Train on the maintainer's PC.
+- [ ] Save and verify checkpoints.
+- [ ] Resume after a deliberate interruption.
+- [ ] Evaluate held-out loss and coding tasks.
+- [ ] Publish an experiment report with hardware, time, tokens, throughput, memory and limitations.
 
-## Phase 8 — Coding post-training
-- [ ] Define instruction data schema and provenance.
-- [ ] Build code instruction/edit datasets.
-- [ ] Run supervised fine-tuning on Lapis-owned weights.
-- [ ] Evaluate instruction following, code edits and test generation.
-- [ ] Consider preference optimization only with suitable data and evaluation.
+**Exit gate:** end-to-end training and recovery proven on the target PC.
 
-**Exit gate:** post-training improves predefined coding tasks without unacceptable base-capability regression.
+## Step 11 — Coding post-training and inference
 
-## Phase 9 — Inference and developer UX
-- [ ] Implement local checkpoint loading and generation.
-- [ ] Add developer CLI.
-- [ ] Publish model metadata format and context limits.
-- [ ] Add memory-safe inference.
-- [ ] Document external application integration.
+- [ ] Define instruction dataset/provenance schema.
+- [ ] Fine-tune LapisLLM's own base checkpoint.
+- [ ] Implement local inference and developer CLI.
+- [ ] Evaluate instructions, completions, edits and generated tests.
+- [ ] Compare pre-training and post-training behavior for regressions.
 
-**Exit gate:** local coding-model runtime is usable independently.
+**Exit gate:** local model generation is usable for bounded coding tasks and limitations are documented.
 
-## Phase 10 — Release and scale
+## Step 12 — Model release and future scaling
+
 - [ ] Resolve model-weight license.
-- [ ] Publish model card, provenance and evaluation report.
-- [ ] Publish checksummed weights in an appropriate artifact registry.
-- [ ] Add release compatibility/regression gates.
-- [ ] Consider distributed training only after single-GPU evidence.
+- [ ] Publish model card, training lineage, provenance and evaluation.
+- [ ] Publish checksummed weights only when licensing permits.
+- [ ] Expand model size only after measured local hardware and compute budgets support it.
+- [ ] Consider remote/distributed compute only through a new explicit project decision.
 
-**Exit gate:** a reproducible and legally reviewed model release.
+**Exit gate:** a reproducible, legally reviewed model release.
 
-## First-release non-goals
+## Non-goals
 
-No frontier-parity claim, billion-parameter training on free Colab, unreviewed scraped corpus, persistent Colab dependency, GPU requirement for normal CI, or consumer agent orchestration inside LapisLLM.
+No hosted notebook training, no assumed cloud GPU, no frontier-parity claim, no billion-parameter target without a compute plan, no unreviewed corpus and no GPU dependency in normal CI. Consumer chat UX and agent orchestration remain outside LapisLLM.
 
 Parameter count alone is not a reason to scale.

@@ -13,8 +13,8 @@ Include the affected revision and component, reproduction steps, expected and ob
 ## Security-sensitive areas
 
 - GitHub Actions permissions and untrusted pull-request code;
-- Google OAuth credentials, Colab runtime proxy tokens and GitHub tokens;
-- notebook outputs and persisted credentials;
+- local environment variables, Git credentials and private package tokens;
+- experiment outputs accidentally containing credentials;
 - dataset ingestion and untrusted archives;
 - model/checkpoint deserialization;
 - generated-code execution in future evaluation harnesses;
@@ -22,9 +22,9 @@ Include the affected revision and component, reproduction steps, expected and ob
 
 ## Secret handling
 
-Never commit API keys, OAuth refresh tokens, GitHub PATs, Colab runtime tokens, private SSH keys, service-account JSON, .env files or credential-bearing notebook outputs.
+Never commit API keys, OAuth refresh tokens, GitHub PATs, private SSH keys, service-account JSON, .env files or credential-bearing notebook outputs.
 
-Use GitHub Actions secrets or an appropriate secret manager in CI, and Colab Secrets for notebook credentials. Apply least privilege, avoid printing tokens, keep credentials out of command-line arguments and revoke exposed credentials immediately.
+Use environment variables or an approved local secret store. Apply least privilege, avoid printing tokens, keep credentials out of command-line arguments and revoke exposed credentials immediately.
 
 ## Data and checkpoint safety
 
@@ -32,4 +32,4 @@ Treat external checkpoints and dataset archives as untrusted. Prefer safetensors
 
 ## Future execution sandbox
 
-When execution-based coding evaluation is implemented, run generated code in a disposable, network-restricted sandbox with CPU, memory, disk and time limits. Never execute generated code in the maintainer's normal shell, credentials-bearing CI job or Colab controller process.
+When execution-based coding evaluation is implemented, run generated code in a disposable, network-restricted sandbox with CPU, memory, disk and time limits. Never execute generated code in the maintainer's normal shell or a credentials-bearing CI job.

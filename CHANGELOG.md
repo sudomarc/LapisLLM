@@ -6,7 +6,7 @@ All notable project changes will be recorded here.
 
 - Re-establish LapisLLM as an independent from-scratch coding-model project.
 - Document the proposed architecture and first Micro profile.
-- Specify Colab-first experimental training with interruption-safe checkpoints.
+- Define local-PC training, hardware discovery and interruption-safe checkpoints.
 - Define dataset provenance, benchmark, security and contribution policies.
 - Establish a phased implementation roadmap and initial issue backlog.
 

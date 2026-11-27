@@ -27,7 +27,7 @@ Decoder-only Transformer
 Next-token loss and optimizer
         |
         v
-Full resumable checkpoint
+Local resumable checkpoint
         |
         v
 Evaluation and local inference
@@ -40,18 +40,17 @@ Versioned model artifact
 
 ~~~text
 lapis/
-  config/          typed model, data and training configuration
+  config/          typed model, data, hardware and training configuration
   data/            ingestion, filtering, deduplication and dataset readers
   tokenizer/       tokenizer training and compatibility
   model/           Transformer modules and parameter counting
-  training/        optimizer loop, metrics and scheduler
+  training/        optimizer loop, metrics, scheduling and resume
   checkpoint/      save, validate, index and restore artifacts
   evaluation/      loss, coding tasks and benchmark adapters
   inference/       checkpoint-backed generation
-  cli/             developer commands
+  cli/             developer and hardware-diagnostic commands
 configs/           versioned experiment profiles
 scripts/            thin executable entry points
-notebooks/          thin Colab notebooks
 tests/              unit, integration and regression coverage
 docs/               canonical technical documentation
 .github/            CI, issue forms and PR templates
@@ -61,13 +60,24 @@ This is a target layout, not a claim that these modules exist. Avoid creating em
 
 ## Platform roles
 
-**GitHub** is the source-control and governance plane. It stores code, configs, docs, small fixtures, experiment manifests and CI results. Large corpora and checkpoints stay outside Git.
+**Maintainer's PC** is the only planned training compute environment. The runtime must detect operating system, CPU, system RAM, accelerator backend, GPU model, available accelerator memory, driver/runtime versions and free disk space. Training configurations must be selected only after this report and a bounded throughput/memory test.
 
-**GitHub Actions** runs deterministic checks that do not need a paid or availability-sensitive accelerator: lint, unit tests, config checks, docs checks, packaging and tiny CPU smoke tests. It is not the default GPU-training service.
+**GitHub** is the source-control and governance plane. It stores code, configs, docs, small legally safe fixtures, experiment manifests and CI results. Large corpora and checkpoints stay outside Git.
 
-**Google Colab** provides temporary compute for manual GPU/TPU experiments. Hardware must be detected at runtime and each run must tolerate interruption.
+**GitHub Actions** runs deterministic CPU validation: lint, unit tests, config checks, documentation checks, packaging and tiny smoke tests. It must not assume access to the maintainer's GPU, private datasets or host machine.
 
-**Artifact storage** persists complete checkpoints and datasets. For manual hosted notebooks, Google Drive is the initial practical option. A future controller may use Drive API, Hugging Face Hub or Cloud Storage after authentication, quota, cost and reliability are tested. Keep storage behind an interface.
+**Local artifact storage** holds downloaded corpora, tokenizer artifacts, run logs and checkpoints. Use a configurable data/output root outside the source tree where possible. Storage operations must be isolated behind an interface to allow backups or another store later without changing the trainer.
+
+## Hardware support policy
+
+- CPU is the reference path for correctness tests and very small smoke runs.
+- NVIDIA CUDA is the first intended accelerator path, subject to installed PyTorch/driver compatibility.
+- AMD ROCm, Apple MPS and other accelerators are not promised until specifically tested.
+- Never assume VRAM, RAM or storage capacity.
+- Never silently fall back to CPU for a long run requested for an accelerator.
+- Record device, precision, peak memory and throughput with every experiment.
+
+The exact model size and batch profile remain open until the actual PC is audited.
 
 ## Module boundaries
 
@@ -76,7 +86,7 @@ This is a target layout, not a claim that these modules exist. Avoid creating em
 - Data: source ingestion, transformation and manifests.
 - Trainer: optimization, gradient scaling, accumulation, scheduling and progress.
 - Checkpoint: serialization, integrity, compatibility and recovery.
-- Evaluation: frozen model evaluation, isolated from training side effects.
+- Evaluation: frozen-model evaluation, isolated from training side effects.
 - Inference: load model-only artifacts and generate within explicit limits.
 - CLI: orchestrate public operations without duplicating module logic.
 
