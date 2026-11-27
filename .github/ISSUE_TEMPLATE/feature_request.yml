@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a scoped capability or engineering improvement.
+title: "[FEATURE] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Which user or engineering problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Define observable, testable outcomes.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Data, compute and maintenance impact
+      description: Include rights, GPU budget, storage and dependencies.

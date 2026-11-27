@@ -1,0 +1,39 @@
+name: Training experiment
+description: Propose a reproducible LapisLLM experiment.
+title: "[EXPERIMENT] "
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: State one falsifiable hypothesis.
+    validations:
+      required: true
+  - type: textarea
+    id: variables
+    attributes:
+      label: Variables to change
+      description: Identify model/data/training variables and held-constant controls.
+    validations:
+      required: true
+  - type: textarea
+    id: compute
+    attributes:
+      label: Compute budget
+      description: Accelerator, VRAM, expected wall time and checkpoint storage.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data and license provenance
+      description: Include source revisions, license state and manifest IDs.
+    validations:
+      required: true
+  - type: textarea
+    id: evaluation
+    attributes:
+      label: Evaluation plan
+      description: Define baseline, metrics, acceptance threshold and failure criteria.
+    validations:
+      required: true
