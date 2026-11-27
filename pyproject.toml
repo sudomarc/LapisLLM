@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lapisllm"
+version = "0.1.0"
+description = "Independent, from-scratch coding language model (Python/PyTorch, local training)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "LapisLLM maintainers" },
+]
+keywords = ["llm", "transformer", "pytorch", "coding", "fresh-init"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "pydantic>=2.7,<3",
+    "tomli-w>=1.0,<2",
+    "typing-extensions>=4.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "torch>=2.3",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.9",
+    "mypy>=1.11",
+    "build>=1.2",
+]
+
+[project.scripts]
+lapis = "lapis.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["lapis*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "DTZ", "G"]
+ignore = ["E501", "B008"]
+unfixable = ["I", "RUF"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.format]
+indent-style = "space"
+preview = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+strict_optional = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["requires_torch: tests requiring PyTorch"]
+filterwarnings = [
+    "error",
+    # PytestUnraisableExceptionWarning on file finalization is a CPython/Windows
+    # interpreter-teardown artifact; our logging tests close their handlers.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
