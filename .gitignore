@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated data and artifacts
+data/raw/
+data/processed/
+data/tokenized/
+datasets/
+corpora/
+artifacts/
+runs/
+outputs/
+logs/
+checkpoints/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.gguf
+
+# Credentials
+*.pem
+*.key
+*.p12
+*.pfx
+service-account*.json
+credentials*.json
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/

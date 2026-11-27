@@ -1,0 +1,35 @@
+name: Dataset source proposal
+description: Propose a dataset for approval before ingestion.
+title: "[DATA] "
+body:
+  - type: input
+    id: url
+    attributes:
+      label: Canonical source URL
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Immutable revision or retrieval date
+    validations:
+      required: true
+  - type: input
+    id: license
+    attributes:
+      label: License identifier and license URL
+    validations:
+      required: true
+  - type: textarea
+    id: fields
+    attributes:
+      label: Proposed fields and intended use
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Rights, privacy, quality and redistribution risks
+      description: Include file-level exceptions and attribution requirements.
+    validations:
+      required: true
