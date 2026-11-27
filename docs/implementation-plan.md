@@ -30,7 +30,7 @@ First build the source registry and approval checks. Then select a small initial
 
 **Issue:** [#60 — Code-oriented BPE tokenizer](https://github.com/sudomarc/LapisLLM/issues/60)
 
-Train only on the approved training partition. Freeze the tokenizer metadata and hash before model training. Check round-trip behavior, special tokens and code tokenization.
+Train only on the approved training partition. Freeze tokenizer metadata and hash before model training. Check round-trip behavior, special tokens and code tokenization.
 
 ## Stage 5 — Implement Lapis Micro
 
@@ -54,13 +54,13 @@ These can proceed in parallel once the model/config contract is stable. Define c
 
 **Issue:** [#64 — Local PC training CLI and preflight](https://github.com/sudomarc/LapisLLM/issues/64)
 
-Compose the hardware diagnostic, data validation, training engine and checkpoint manager into one command. Support explicit configs, run IDs, data/output roots, progress, Ctrl+C and resume. Do not use notebooks or hosted runners as the canonical path.
+Compose the hardware diagnostic, data validation, training engine and checkpoint manager into one command. Support explicit configs, run IDs, data/output roots, progress, Ctrl+C and resume. Do not use hosted runtimes as the canonical path.
 
-## Stage 9 — Evaluation and local generation
+## Stage 9 — Local generation and evaluation
 
-**Issues:** [#66 — Coding evaluation harness](https://github.com/sudomarc/LapisLLM/issues/66), [#69 — Local inference and developer CLI](https://github.com/sudomarc/LapisLLM/issues/69)
+**Issues:** [#69 — Checkpoint-backed local inference](https://github.com/sudomarc/LapisLLM/issues/69), [#66 — Coding evaluation harness](https://github.com/sudomarc/LapisLLM/issues/66)
 
-Implement checkpoint-backed generation and an evaluation harness with fixed prompts, versioned tasks and sandboxed code execution. Evaluation must run against held-out data and retain failures as well as successes.
+Implement inference against a synthetic or smoke-test checkpoint first; this avoids waiting for a full training run. Then add the evaluation harness with fixed prompts, versioned tasks and sandboxed code execution. Evaluation must run against held-out data and retain failures as well as successes.
 
 ## Stage 10 — First end-to-end local experiment
 
@@ -92,16 +92,16 @@ Resolve model-artifact licensing, dataset obligations, model card, provenance an
                      └── #62 training engine
                           ├── #63 checkpoint state
                           ├── #65 local artifact storage
-                          └── #64 local training command
-                               ├── #66 evaluation
-                               ├── #69 inference CLI
-                               └── #67 end-to-end Micro run
-                                    └── #68 coding post-training
+                          ├── #64 local training command
+                          └── #69 inference core
+                               └── #66 coding evaluation
+                                    └── #67 end-to-end local Micro run
+                                         └── #68 coding post-training
 
 #71 model-weight license is a release blocker.
 ~~~
 
-The diagram shows the logical order, not a requirement that every independent task be done by one person. #63 and #65 are intentionally parallelizable. #74 can begin once the package foundation exists, but its model benchmark portion waits for the Micro model and trainer.
+The diagram shows logical dependencies, not a requirement that one person complete every task. #63 and #65 are intentionally parallelizable. #74 can begin once the package foundation exists, but its model benchmark portion waits for the Micro model and trainer. #69 must be testable with a synthetic checkpoint so it does not depend on a full trained artifact.
 
 ## Working rules
 
