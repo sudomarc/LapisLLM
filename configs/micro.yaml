@@ -1,0 +1,31 @@
+# Lapis Micro configuration — smallest experimental profile
+# Based on: vocabulary 16k, hidden size 256, 4 layers, 4 heads, head dimension 64
+# Sequence length 512, RoPE base 10,000, pre-norm RMSNorm and SwiGLU
+# Tied input/output embeddings
+
+model_name: lapis-micro
+vocab_size: 16_000
+hidden_size: 256
+num_layers: 4
+num_heads: 4
+head_dim: 64
+max_seq_len: 512
+rope_base: 10_000.0
+tokenizer_name: lapis-code
+
+precision: fp32
+device: cpu
+
+data_root: ./.lapis-data
+run_root: ./.lapis-data/runs
+seed: 42
+
+batch_size: 8
+micro_batch_size: 2
+gradient_accumulation_steps: 4
+max_steps: 10_000
+learning_rate: 5e-4
+weight_decay: 0.1
+beta1: 0.9
+beta2: 0.95
+grad_clip: 1.0

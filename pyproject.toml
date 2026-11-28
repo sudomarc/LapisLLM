@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lapisllm"
+version = "0.1.0"
+description = "From-scratch coding language model"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml",
+]
+extras = {
+    "torch": ["torch"],
+    "dev": [
+        "pytest",
+        "pytest-cov",
+        "pre-commit",
+        "black",
+        "flake8",
+    ],
+}
+
+[project.scripts]
+lapis-train = "lapis.scripts.train:main"
+
+[tool.pytest]
+testpaths = ["lapis/tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.setuptools.packages.find]
+include = ["lapis*"]

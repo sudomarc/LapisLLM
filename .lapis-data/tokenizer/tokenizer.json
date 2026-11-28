@@ -1,0 +1,191 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [
+    {
+      "id": 0,
+      "content": "<PAD>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 1,
+      "content": "<EOS>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 2,
+      "content": "<UNK>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 3,
+      "content": "<BEGIN_OF_TOKEN>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 4,
+      "content": "<END_OF_TOKEN>",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    }
+  ],
+  "normalizer": {
+    "type": "NFKC"
+  },
+  "pre_tokenizer": {
+    "type": "ByteLevel",
+    "add_prefix_space": true,
+    "trim_offsets": false,
+    "use_regex": true
+  },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "BPE",
+    "dropout": null,
+    "unk_token": "<UNK>",
+    "continuing_subword_prefix": null,
+    "end_of_word_suffix": null,
+    "fuse_unk": false,
+    "byte_fallback": false,
+    "ignore_merges": false,
+    "vocab": {
+      "<PAD>": 0,
+      "<EOS>": 1,
+      "<UNK>": 2,
+      "<BEGIN_OF_TOKEN>": 3,
+      "<END_OF_TOKEN>": 4,
+      "(": 5,
+      ")": 6,
+      "+": 7,
+      "1": 8,
+      "2": 9,
+      ":": 10,
+      "=": 11,
+      "a": 12,
+      "d": 13,
+      "e": 14,
+      "f": 15,
+      "h": 16,
+      "l": 17,
+      "o": 18,
+      "p": 19,
+      "s": 20,
+      "x": 21,
+      "Ċ": 22,
+      "Ġ": 23,
+      "()": 24,
+      "as": 25,
+      "de": 26,
+      "el": 27,
+      "hel": 28,
+      "lo": 29,
+      "pas": 30,
+      "Ġ+": 31,
+      "Ġ1": 32,
+      "Ġ2": 33,
+      "Ġ=": 34,
+      "Ġde": 35,
+      "Ġhel": 36,
+      "Ġpas": 37,
+      "():": 38,
+      "Ġdef": 39,
+      "Ġhello": 40,
+      "Ġpass": 41
+    },
+    "merges": [
+      [
+        "(",
+        ")"
+      ],
+      [
+        "a",
+        "s"
+      ],
+      [
+        "d",
+        "e"
+      ],
+      [
+        "e",
+        "l"
+      ],
+      [
+        "h",
+        "el"
+      ],
+      [
+        "l",
+        "o"
+      ],
+      [
+        "p",
+        "as"
+      ],
+      [
+        "Ġ",
+        "+"
+      ],
+      [
+        "Ġ",
+        "1"
+      ],
+      [
+        "Ġ",
+        "2"
+      ],
+      [
+        "Ġ",
+        "="
+      ],
+      [
+        "Ġ",
+        "de"
+      ],
+      [
+        "Ġ",
+        "hel"
+      ],
+      [
+        "Ġ",
+        "pas"
+      ],
+      [
+        "()",
+        ":"
+      ],
+      [
+        "Ġde",
+        "f"
+      ],
+      [
+        "Ġhel",
+        "lo"
+      ],
+      [
+        "Ġpas",
+        "s"
+      ]
+    ]
+  }
+}

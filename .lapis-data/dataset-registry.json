@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "updated": "2026-11-27T23:58:12.217294Z",
+  "records": [
+    {
+      "source_id": "lapis-foundation-code",
+      "source_revision": "v0.1.0-release",
+      "record_id": "python-examples-001",
+      "content_sha256": "e46504809229c69ea296a75cd6c131d977e83c433e4d67b6912946f0621aa6ed",
+      "language": "python",
+      "path": "examples/basic.py",
+      "license": "MIT",
+      "split": "train",
+      "attribution": "Internal LapisLLM foundation examples",
+      "reviewer": "system",
+      "approval_state": "approved",
+      "retrieval_date": "2026-11-27T23:58:12.217260Z",
+      "content": "# LapisLLM foundation code examples\n\ndef hello_world():\n    \"\"\"Print a greeting.\"\"\"\nprint(\"Hello, World!\")\n\nif __name__ == \"__main__\":\n    hello_world()"
+    }
+  ]
+}
