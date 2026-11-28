@@ -128,7 +128,9 @@ class DatasetRegistry:
                 for rec_data in data.get("records", []):
                     try:
                         rec = SourceRecord(rec_data)
-                        self.records[rec_data["source_id"]] = rec
+                        # Use record_id as unique key, not source_id
+                        key = rec_data.get("record_id", rec_data["source_id"])
+                        self.records[key] = rec
                     except ValueError as e:
                         print(f"⚠️  Skipping invalid record: {e}")
             except (json.JSONDecodeError, KeyError):
@@ -149,13 +151,14 @@ class DatasetRegistry:
     def add_source(self, data: Dict[str, Any]) -> SourceRecord:
         """Add a new source record. Returns the record."""
         rec = SourceRecord(data)
-        self.records[rec.source_id] = rec
+        key = rec.record_id
+        self.records[key] = rec
         self.save()
         return rec
 
-    def get_source(self, source_id: str) -> Optional[SourceRecord]:
-        """Get a source by ID."""
-        return self.records.get(source_id)
+    def get_source(self, record_id: str) -> Optional[SourceRecord]:
+        """Get a source by record ID."""
+        return self.records.get(record_id)
 
     def get_approved(self) -> List[SourceRecord]:
         """Get all approved sources."""

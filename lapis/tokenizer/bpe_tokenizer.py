@@ -168,7 +168,7 @@ def decode_text(tokenizer: Tokenizer, encoding) -> str:
         ids = encoding.ids
     else:
         ids = encoding
-    return tokenizer.decode(_ids=ids)
+    return tokenizer.decode(ids)
 
 
 def test_round_trip(tokenizer: Tokenizer, test_texts: list):

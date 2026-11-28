@@ -335,9 +335,10 @@ class LapisMicro(nn.Module):
         # --- Embedding ---
         hidden_states = self.embed_tokens(input_ids)
 
-        # --- Causal mask ---
-        mask = torch.tril(
-            torch.ones(seq_len, seq_len, device=input_ids.device, dtype=torch.bool)
+        # --- Causal mask (upper triangular, True = mask out future) ---
+        mask = torch.triu(
+            torch.ones(seq_len, seq_len, device=input_ids.device, dtype=torch.bool),
+            diagonal=1
         )
 
         # --- Transformer blocks ---
@@ -362,7 +363,7 @@ class LapisMicro(nn.Module):
         if labels is not None:
             # Shift logits and labels for next-token prediction
             shift_logits = logits[:, :-1, :].contiguous()
-            shift_labels = input_ids[:, 1:].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
 
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(
