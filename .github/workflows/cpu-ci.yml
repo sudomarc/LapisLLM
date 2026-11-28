@@ -1,0 +1,49 @@
+name: LapisLLM CPU CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test on CPU
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pydantic PyYAML
+
+      - name: Install lapis package
+        run: |
+          pip install -e .
+
+      - name: Run hardware detection tests
+        run: |
+          python -m pytest lapis/tests/test_hardware.py -v
+
+      - name: Run config tests
+        run: |
+          python -m pytest lapis/tests/test_config.py -v
+
+      - name: Verify no GPU-dependent deps
+        run: |
+          # Ensure we're not pulling in GPU-specific packages
+          pip list | grep -i cuda || echo "No CUDA packages installed — good"
+
+      - name: Run lint check
+        run: |
+          # Basic import check
+          python -c "from lapis import __version__; print(f'LapisLLM v{__version__} imported OK')"

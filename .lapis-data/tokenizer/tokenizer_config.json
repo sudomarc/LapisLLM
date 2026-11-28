@@ -1,0 +1,12 @@
+{
+  "vocab_size": 16000,
+  "model_name": "lapis-micro",
+  "max_seq_len": 512,
+  "special_tokens": [
+    "<PAD>",
+    "<EOS>",
+    "<UNK>",
+    "<BEGIN_OF_TOKEN>",
+    "<END_OF_TOKEN>"
+  ]
+}
