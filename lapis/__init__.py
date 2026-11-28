@@ -1,10 +1,11 @@
-# LapisLLM — from-scratch coding language model
-# Base model trains from random initialization. No third-party pretrained weights.
+"""LapisLLM — an independent, from-scratch coding language model.
+
+This package is the initial project foundation (issue #58): configuration,
+error handling, logging, hardware discovery and the ``lapis doctor`` command.
+Model training, tokenization and inference land in later stages of the
+implementation plan (docs/implementation-plan.md).
+"""
+
 __version__ = "0.1.0"
 
-# Optional: PyTorch is installed separately via [torch] extra
-try:
-    import torch
-    _HAS_TORCH = True
-except ImportError:
-    _HAS_TORCH = False
+__all__ = ["__version__"]
